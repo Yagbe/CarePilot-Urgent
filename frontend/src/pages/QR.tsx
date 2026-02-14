@@ -1,7 +1,6 @@
-import { useParams, Link } from "react-router-dom";
+import { useParams } from "react-router-dom";
 import { useEffect, useState } from "react";
 import { Topbar } from "@/components/layout/Topbar";
-import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { motion } from "framer-motion";
 
@@ -36,7 +35,7 @@ export function QR() {
                 {data?.token ?? "—"}
               </div>
               <p className="mt-2 text-sm text-muted-foreground">
-                Check in with token <strong>{data?.token}</strong> or code <strong>{pid}</strong> at the kiosk.
+                Show this token or QR at the <strong>check-in kiosk</strong> when you arrive at the hospital.
               </p>
             </CardContent>
           </Card>
@@ -54,15 +53,11 @@ export function QR() {
                   className="mx-auto rounded-lg border border-border p-1"
                 />
               ) : null}
-              <p className="mt-2 text-sm text-muted-foreground">Scan at kiosk or type code: <strong>{pid}</strong></p>
+              <p className="mt-2 text-sm text-muted-foreground">Show this at the kiosk or use code: <strong>{pid}</strong></p>
             </CardContent>
           </Card>
         </motion.div>
-        <div className="flex justify-center">
-          <Button asChild variant="secondary">
-            <Link to="/kiosk-station">Go to Kiosk</Link>
-          </Button>
-        </div>
+        <p className="text-center text-muted-foreground text-sm">The check-in kiosk is at the hospital; bring this QR or token when you arrive.</p>
       </main>
     </>
   );

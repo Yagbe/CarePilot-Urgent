@@ -51,7 +51,9 @@ Deploy the app (FastAPI + React SPA + SQLite) to **Railway** or **Render** in a 
 
 - **Portal:** `https://your-app-url/`
 - **Staff login:** `https://your-app-url/staff/login` (use `STAFF_ACCESS_PASSWORD`).
-- **Station URLs:** same as local (e.g. `/patient-station`, `/kiosk-station`, `/waiting-room-station`, `/staff-station`).
+- **Station URLs:** same as local (e.g. `/patient-station`, `/waiting-room-station`, `/staff-station`).
+
+**Kiosk (hospital-only):** The patient portal does not expose the kiosk. The kiosk is a separate, hospital-only system. Run it on a **Jetson Nano** (or similar) at the facility: open `/kiosk-station` on that device. The nano can run sensors for vitals, a USB mic, and a USB camera (or mic module) for on-site check-in and capture.
 
 Change `STAFF_ACCESS_PASSWORD` and `APP_SECRET_KEY` in the platform’s env vars; avoid committing secrets.
 

@@ -1,6 +1,6 @@
 import { useEffect, useState } from "react";
 import { Link } from "react-router-dom";
-import { User, Monitor, Tv, Briefcase } from "lucide-react";
+import { User, Tv, Briefcase } from "lucide-react";
 import { Topbar } from "@/components/layout/Topbar";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
@@ -15,7 +15,6 @@ export function Home() {
 
   const stations = [
     { to: "/patient-station", title: "Patient Access", desc: "Complete intake and receive your QR/token for check-in.", icon: User },
-    { to: "/kiosk-station", title: "Kiosk Station", desc: "Front-desk kiosk for token or code check-in.", icon: Monitor },
     { to: "/waiting-room-station", title: "Waiting Room Display", desc: "Token-only queue board for TVs.", icon: Tv },
     { to: "/staff-station", title: "Staff Workspace", desc: "Secure staff operations and analytics.", icon: Briefcase },
   ];
@@ -65,14 +64,13 @@ export function Home() {
         <Card>
           <CardHeader>
             <CardTitle className="text-lg">Multi-Computer Test URLs</CardTitle>
-            <CardDescription>Use one URL per computer in your live test:</CardDescription>
+            <CardDescription>Use one URL per device. Kiosk is hospital-only (open /kiosk-station on the nano).</CardDescription>
           </CardHeader>
           <CardContent>
             <ul className="text-muted-foreground text-sm space-y-1">
-              <li>Patient computer: <strong>/patient-station</strong></li>
-              <li>Kiosk computer: <strong>/kiosk-station</strong></li>
-              <li>Waiting room TV/computer: <strong>/waiting-room-station</strong></li>
-              <li>Staff computer: <strong>/staff-station</strong></li>
+              <li>Patient: <strong>/patient-station</strong></li>
+              <li>Waiting room TV: <strong>/waiting-room-station</strong></li>
+              <li>Staff: <strong>/staff-station</strong></li>
             </ul>
           </CardContent>
         </Card>

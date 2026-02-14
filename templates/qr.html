@@ -21,7 +21,6 @@
       <nav class="nav">
         <a href="/">Portal</a>
         <a href="/intake">Intake</a>
-        <a class="active" href="/kiosk">Kiosk</a>
       </nav>
     </div>
   </header>
@@ -32,13 +31,13 @@
         <h2 class="title">Your Check-in Details</h2>
         <p class="muted">{{ display_name }}</p>
         <div class="token-card">{{ token }}</div>
-        <p class="muted">You can check in with token <strong>{{ token }}</strong> or code <strong>{{ pid }}</strong>.</p>
+        <p class="muted">Show this token or QR at the <strong>check-in kiosk</strong> when you arrive at the hospital.</p>
       </div>
       <div class="card" style="text-align:center;">
         <h3 class="title">QR Check-in</h3>
         <img src="/qr-img/{{ pid }}" alt="QR code" width="220" height="220" style="border:1px solid var(--border); border-radius:10px; padding:.4rem;">
-        <p class="muted" style="margin-top:.7rem;">Scan at kiosk or type code: <strong>{{ pid }}</strong></p>
-        <p class="microcopy">If QR scanning fails, enter token <strong>{{ token }}</strong> at kiosk.</p>
+        <p class="muted" style="margin-top:.7rem;">Show this at the kiosk or use code: <strong>{{ pid }}</strong></p>
+        <p class="microcopy">The check-in kiosk is at the hospital; bring this when you arrive.</p>
       </div>
     </div>
   </main>
