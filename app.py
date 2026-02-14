@@ -57,6 +57,21 @@ class KioskCheckinRequest(BaseModel):
     code: str = ""
 
 
+class VitalsSubmitRequest(BaseModel):
+    """JSON body for sensor bridge / automatic vitals submission."""
+    token: str = ""
+    pid: str = ""
+    device_id: str = "sensors"
+    spo2: Optional[float] = None
+    hr: Optional[float] = None
+    temp_c: Optional[float] = None
+    bp_sys: Optional[float] = None
+    bp_dia: Optional[float] = None
+    confidence: float = 0.9
+    simulated: int = 0
+    ts: str = ""
+
+
 # -----------------------------------------------------------------------------
 # App + storage
 # -----------------------------------------------------------------------------
@@ -1255,6 +1270,43 @@ async def api_vitals_submit(
         )
         DB_CONN.commit()
     _audit("vitals_submit", {"pid": resolved_pid, "token": p.get("token"), "device_id": device_id})
+    await _broadcast_queue_update()
+    return {"ok": True, "pid": resolved_pid, "token": p.get("token"), "ts": vitals_ts}
+
+
+@app.post("/api/vitals/submit/json")
+async def api_vitals_submit_json(body: VitalsSubmitRequest):
+    """JSON endpoint for sensor bridge: POST vitals from hardware (Nano, etc.) by token or pid."""
+    code = (body.pid or body.token or "").strip()
+    resolved_pid = _resolve_code(code)
+    if not resolved_pid:
+        raise HTTPException(404, "Patient not found.")
+    with STATE_LOCK:
+        p = patients.get(resolved_pid)
+        if not p:
+            raise HTTPException(404, "Patient not found.")
+        vitals_ts = (body.ts or "").strip() or datetime.utcnow().isoformat()
+        DB_CONN.execute(
+            """
+            INSERT INTO vitals(pid, token, device_id, spo2, hr, temp_c, bp_sys, bp_dia, confidence, ts, simulated)
+            VALUES(?,?,?,?,?,?,?,?,?,?,?)
+            """,
+            (
+                resolved_pid,
+                p.get("token", ""),
+                body.device_id or "sensors",
+                body.spo2,
+                body.hr,
+                body.temp_c,
+                body.bp_sys,
+                body.bp_dia,
+                body.confidence,
+                vitals_ts,
+                1 if body.simulated else 0,
+            ),
+        )
+        DB_CONN.commit()
+    _audit("vitals_submit", {"pid": resolved_pid, "token": p.get("token"), "device_id": body.device_id})
     await _broadcast_queue_update()
     return {"ok": True, "pid": resolved_pid, "token": p.get("token"), "ts": vitals_ts}
 

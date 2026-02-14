@@ -1,10 +1,11 @@
 # CarePilot Urgent v3.1
 
-CarePilot Urgent is a FastAPI + Jinja urgent care workflow app with:
-- patient intake + QR/token handoff
-- kiosk check-in
-- privacy-safe public waiting display
-- secure staff queue and analytics tools
+CarePilot Urgent is a FastAPI + React urgent care workflow app:
+
+- **Patient portal** – intake, QR/token for check-in (no kiosk link; kiosk is hospital-only)
+- **Kiosk** – QR scan + manual code entry, voice assistant, vitals (hospital-only, e.g. Jetson Nano)
+- **Waiting room display** – token-only queue (privacy-safe)
+- **Staff** – queue, status updates, analytics (password-protected)
 
 ---
 
@@ -12,25 +13,16 @@ CarePilot Urgent is a FastAPI + Jinja urgent care workflow app with:
 
 ```bash
 python -m venv .venv
-source .venv/bin/activate
+source .venv/bin/activate   # Windows: .venv\Scripts\activate
 pip install -r requirements.txt
 cp .env.example .env
+# Edit .env: STAFF_ACCESS_PASSWORD, GEMINI_API_KEY (optional)
 uvicorn app:app --reload --host 0.0.0.0 --port 8000
 ```
 
-Open: `http://localhost:8000/`
+Open **http://localhost:8000/**
 
-### Best UI/UX track (React + Tailwind + shadcn/ui)
-
-The app includes an optional React frontend that satisfies the **Best UI/UX** stack:
-
-- **Tailwind CSS** – utility-first styling
-- **shadcn/ui** (Radix primitives) – Button, Card, Input, Label
-- **lucide-react** – icons (Stethoscope, User, Monitor, etc.)
-- **Inter** font (with system fallback)
-- **framer-motion** – subtle page/block animations
-
-To use the React UI:
+### React frontend (recommended)
 
 ```bash
 cd frontend
@@ -40,161 +32,181 @@ cd ..
 uvicorn app:app --reload --host 0.0.0.0 --port 8000
 ```
 
-When `frontend/dist/index.html` exists, the server serves the SPA for portal, intake, kiosk, display, staff, analytics, and privacy. The same station URLs apply; APIs are unchanged.
-
-### Deploy to Railway or Render
-
-See **[DEPLOY.md](DEPLOY.md)** for one-click Docker deploy to Railway or Render (builds React frontend, runs FastAPI, optional persistent SQLite volume).
+When `frontend/dist` exists, the server serves the React SPA (Tailwind, shadcn/ui, Framer Motion). Same URLs; APIs unchanged.
 
 ---
 
-## 2) Role-Based Access (Hospital Style)
+## 2) Environment Variables
 
-- `GET /` -> Access Portal (Patient / Kiosk / Staff)
-- `GET /intake` -> Patient intake wizard
-- `GET /qr/{pid}` -> Patient QR + token
-- `GET /kiosk` -> Kiosk station check-in
-- `GET /display` -> Public waiting room display (token only)
-- `GET /staff/login` -> Staff login
-- `GET /staff` -> Staff queue operations (protected)
-- `GET /analytics` -> Staff analytics (protected)
-- `GET /privacy` -> Privacy + safety statement
-
-Dedicated station URLs for multi-computer tests:
-- `GET /patient-station` -> Patient computer
-- `GET /kiosk-station` -> Kiosk computer
-- `GET /waiting-room-station` -> Waiting room display computer/TV
-- `GET /staff-station` -> Staff computer (redirects to staff login)
-- `GET /kiosk/camera` -> Jetson USB-camera QR kiosk mode
-
-### 4-computer live test setup
-
-Use the same base host/IP and open one path per device:
-- Patient machine: `http://<HOST-IP>:8000/patient-station`
-- Kiosk machine: `http://<HOST-IP>:8000/kiosk-station`
-- Waiting room machine: `http://<HOST-IP>:8000/waiting-room-station`
-- Staff machine: `http://<HOST-IP>:8000/staff-station`
-
----
-
-## 3) Default Staff Login (Current Demo Setup)
-
-- Password: `1234`
-
-For any real deployment, **change this immediately** via env variable:
-- `STAFF_ACCESS_PASSWORD=<your-strong-password>`
-
----
-
-## 4) Environment Variables
-
-Copy `.env.example` to `.env` and edit:
+Copy `.env.example` to `.env` and set as needed:
 
 ```bash
 cp .env.example .env
 ```
 
-Key variables:
-- `APP_ENV=production`
-- `HOST=0.0.0.0`
-- `PORT=8000` (or your platform-provided port)
-- `ENABLE_DOCS=0` (disable docs in prod)
-- `FORCE_HTTPS=1` (enable only behind TLS)
-- `TRUSTED_HOSTS=yourdomain.com,www.yourdomain.com`
-- `APP_SECRET_KEY=<long-random-secret>`
-- `STAFF_ACCESS_PASSWORD=<staff-password>`
-- `STAFF_SESSION_TTL_MINUTES=480`
-- `CAMERA_INDEX=0`
-- `CAM_W=1280`
-- `CAM_H=720`
-- `CAMERA_PIPELINE=` (optional GStreamer pipeline for Jetson)
-- `DB_PATH=carepilot.db`
-- `DEMO_MODE=0`
-- `USE_SIMULATED_VITALS=1`
-- `AI_PROVIDER=openai`
-- `OPENAI_API_KEY=...` (optional)
+| Variable | Description | Example |
+|----------|-------------|--------|
+| `APP_ENV` | `development` or `production` | `production` |
+| `HOST` | Bind address | `0.0.0.0` |
+| `PORT` | Server port | `8000` |
+| `APP_SECRET_KEY` | Session/signing secret | long random string |
+| `STAFF_ACCESS_PASSWORD` | Staff login password | set in production |
+| `STAFF_SESSION_TTL_MINUTES` | Staff session length | `480` |
+| `DB_PATH` | SQLite database path | `carepilot.db` or `/data/carepilot.db` |
+| `CAMERA_INDEX` | Webcam device index for kiosk | `0` |
+| `CAM_W`, `CAM_H` | Camera resolution | `1280`, `720` |
+| `CAMERA_PIPELINE` | Optional GStreamer pipeline (Jetson) | see Jetson section |
+| `GEMINI_API_KEY` or `GOOGLE_API_KEY` | Gemini API key (optional) | from Google AI Studio |
+| `DEMO_MODE` | Show demo badge | `0` or `1` |
+| `USE_SIMULATED_VITALS` | Allow simulated vitals | `1` |
+
+In **production**, if `STAFF_ACCESS_PASSWORD` is not set (or left default), the app uses a built-in demo password so login works for judging; set `STAFF_ACCESS_PASSWORD` in your platform’s env to use your own.
 
 ---
 
-## 5) API and Health Endpoints
+## 3) Staff Login
 
-- `GET /healthz` -> liveness
-- `GET /readyz` -> readiness
-- `GET /api/ping` -> app status/version/env
-- `GET /api/queue` -> public queue (privacy-safe)
-- `GET /api/staff-queue` -> staff queue (protected)
-- `GET /camera/stream` -> MJPEG camera stream for camera kiosk
-- `GET /api/camera/last-scan` -> latest QR text + freshness
-- `POST /api/kiosk-checkin` -> shared kiosk check-in API
-- `POST /api/vitals/submit` -> Jetson/device vitals submission
-- `POST /api/vitals/simulate` -> generate demo vitals (staff auth)
-- `GET /api/vitals/{pid}` -> latest vitals for a visit (staff auth)
-- `POST /api/ai/chat` -> non-diagnostic operational assistant reply
-- `GET /api/lobby-load` -> occupancy score (Low/Medium/High)
-- `GET /api/audit` -> in-memory + DB-backed audit events (staff auth)
-- `WS /ws/queue` -> real-time queue updates for display/staff
+- **Local (development):** use the password in `.env` (e.g. `STAFF_ACCESS_PASSWORD=1234` or your choice).
+- **Production (e.g. Render):** if you have not set `STAFF_ACCESS_PASSWORD` in the dashboard, use the built-in demo password so the app still starts. Set `STAFF_ACCESS_PASSWORD` in the host’s environment to override.
+
+Staff URL: **`/staff/login`** → after login you get **`/staff`** (queue) and **`/analytics`**.
 
 ---
 
-## 6) Production Deployment
+## 4) URLs and Stations
 
-### Docker
+| URL | Use |
+|-----|-----|
+| `/` | Patient portal (home) |
+| `/patient-station` | Redirects to intake flow |
+| `/intake` | Patient intake form |
+| `/qr/{pid}` | Patient QR + token (show at kiosk when they arrive) |
+| `/kiosk-station` | **Kiosk** – QR camera + code entry + voice (hospital-only) |
+| `/display` or `/waiting-room-station` | Waiting room display (token-only queue) |
+| `/staff-station` | Redirects to staff login |
+| `/staff/login` | Staff sign-in |
+| `/staff` | Staff queue (protected) |
+| `/analytics` | Staff analytics (protected) |
+| `/privacy` | Privacy & safety |
+
+**Kiosk** is not linked from the patient portal. Patients are told to bring their token/QR to the check-in kiosk at the hospital. Open `/kiosk-station` only on the kiosk device (e.g. Jetson Nano).
+
+---
+
+## 5) Judging / 4-Device Setup
+
+Use one base URL (e.g. **https://carepilot-urgent.onrender.com** or **http://localhost:8000**):
+
+| Device | Open | Purpose |
+|--------|------|---------|
+| **Computer 1** | `{BASE}/staff/login` → then `/staff` | Staff: queue, status, analytics. Log in with staff password. |
+| **Computer 2** | `{BASE}/kiosk-station` | Kiosk: scan QR or enter token, then voice + vitals. |
+| **Phone (e.g. iPhone)** | `{BASE}/` or `/intake` | Patient: complete intake, get QR/token. |
+| **Screen / Computer 3** | `{BASE}/display` | Waiting room: token-only queue. |
+
+Flow: Patient does intake on phone → gets token/QR → at kiosk (Computer 2) scans or enters token → staff sees them on Computer 1 → waiting room screen shows queue.
+
+---
+
+## 6) Docker
+
+**Build:**
 
 ```bash
 docker build -t carepilot-urgent:latest .
-docker run --env-file .env -p 8000:8000 carepilot-urgent:latest
 ```
 
-Or:
+**Run (interactive):**
+
+```bash
+docker run -p 8000:8000 --env-file .env carepilot-urgent:latest
+```
+
+**Run with persistent database:**
+
+```bash
+docker run -p 8000:8000 --env-file .env -v carepilot-data:/data carepilot-urgent:latest
+```
+
+**Run in background:**
+
+```bash
+docker run -d -p 8000:8000 --env-file .env --name carepilot carepilot-urgent:latest
+# Stop: docker stop carepilot
+```
+
+**Using Docker Compose:**
 
 ```bash
 docker compose up --build -d
 ```
 
-### PaaS (Render / Railway / Fly.io style)
-
-- Runtime: Python
-- Start command: `uvicorn app:app --host 0.0.0.0 --port $PORT`
-- Set env vars from `.env.example`
-- Health check path: `/healthz`
+Then open **http://localhost:8000**. The image builds the React frontend and runs FastAPI; it expects `PORT=8000` (or set `PORT` in env).
 
 ---
 
-## 7) Team Collaboration (GitHub)
+## 7) Deploy (Render / Railway)
 
-Repo:
-- `https://github.com/Yagbe/CarePilot-Urgent`
+See **[DEPLOY.md](DEPLOY.md)** for:
 
-Typical teammate flow:
+- Railway: connect repo, set `STAFF_ACCESS_PASSWORD`, `APP_SECRET_KEY`, optional volume for `DB_PATH=/data/carepilot.db`
+- Render: Docker runtime, env vars, optional disk at `/data` for SQLite
 
-```bash
-git clone https://github.com/Yagbe/CarePilot-Urgent.git
-cd CarePilot-Urgent
-git checkout -b feature/my-change
-# make changes
-git add .
-git commit -m "Describe change"
-git push -u origin feature/my-change
-```
-
-Then open a Pull Request into `main`.
+After deploy, use the same paths: `/`, `/intake`, `/kiosk-station`, `/display`, `/staff/login`, etc.
 
 ---
 
-## 8) Important Operational Note
+## 8) Automatic Vitals from Sensors (Jetson Nano)
 
-This app now writes core operational data to SQLite (`DB_PATH`) for persistence in demo environments.
-- Keep a **single app instance** for consistent in-memory websocket + camera coordination.
-- For full scale multi-instance deployments, move to managed Postgres + shared pub/sub.
+To send vitals **from hardware** (SpO2, HR, temp, BP) into the app:
 
-### Jetson Nano camera notes
+- **API:** `POST /api/vitals/submit/json` with JSON body: `token`, `device_id`, `spo2`, `hr`, `temp_c`, `bp_sys`, `bp_dia`, etc.
+- **Script:** Run the sensor bridge on the Nano (or any machine with sensors). See **[SENSORS.md](SENSORS.md)** for:
+  - `CAREPILOT_URL`, `CAREPILOT_TOKEN`, `CAREPILOT_INTERVAL`, `CAREPILOT_DEVICE_ID`
+  - Simulated vs real sensors (Max30102, DS18B20, etc.)
+  - Example: `export CAREPILOT_TOKEN=UC-1234 && python scripts/sensor_bridge.py`
 
-- Verify camera:
-  - `ls /dev/video*`
-  - `v4l2-ctl --list-devices`
-- Recommended low-latency pipeline (`CAMERA_PIPELINE`):
-  - `v4l2src device=/dev/video0 ! video/x-raw,width=1280,height=720,framerate=30/1 ! videoconvert ! appsink drop=1 max-buffers=1 sync=false`
-- Quick OpenCV test:
-  - `python3 -c "import cv2; c=cv2.VideoCapture(0); ok,f=c.read(); print(ok, None if f is None else f.shape); c.release()"`
-- If pip OpenCV is difficult on Jetson, install OS package:
-  - `sudo apt-get install python3-opencv`
+---
+
+## 9) API and Health
+
+| Endpoint | Description |
+|----------|-------------|
+| `GET /healthz` | Liveness |
+| `GET /readyz` | Readiness |
+| `GET /api/ping` | App version/env |
+| `GET /api/queue` | Public queue (token-only) |
+| `GET /api/staff-queue` | Staff queue (auth) |
+| `POST /api/kiosk-checkin`, `POST /api/kiosk-checkin/json` | Kiosk check-in |
+| `POST /api/vitals/submit` | Vitals (form) |
+| `POST /api/vitals/submit/json` | Vitals (JSON, for sensor bridge) |
+| `GET /api/vitals/{pid}` | Latest vitals for patient (staff) |
+| `POST /api/vitals/simulate` | Demo vitals (staff) |
+| `POST /api/ai/chat` | Voice assistant / non-diagnostic chat |
+| `GET /api/lobby-load` | Lobby occupancy |
+| `GET /camera/stream` | MJPEG camera (kiosk) |
+| `GET /api/camera/last-scan` | Latest QR scan value |
+| `WS /ws/queue` | Real-time queue updates |
+
+---
+
+## 10) Jetson Nano (Camera + Sensors)
+
+- **Camera:** `ls /dev/video*` and `v4l2-ctl --list-devices`. Optional `CAMERA_PIPELINE` for GStreamer (see DEPLOY/README for a low-latency example).
+- **OpenCV on Nano:** `sudo apt-get install python3-opencv` if needed.
+- **Kiosk:** Open `http://<nano-ip>:8000/kiosk-station` (or your deployed URL). Camera + code entry + voice run in the browser.
+- **Sensors:** Use **scripts/sensor_bridge.py** and **[SENSORS.md](SENSORS.md)** to send vitals by token.
+
+---
+
+## 11) Operational Notes
+
+- Data is stored in SQLite (`DB_PATH`). Use a **single app instance** for in-memory websocket and camera coordination.
+- For production at scale, use a managed database and shared pub/sub instead of in-memory state.
+
+---
+
+## 12) Repo and Contributing
+
+- Repo: `https://github.com/Yagbe/CarePilot-Urgent` (or your fork)
+- Clone → create branch → make changes → push → open a Pull Request to `main`.
