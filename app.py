@@ -77,6 +77,8 @@ DEMO_MODE_FLAG = os.getenv("DEMO_MODE", "0") == "1"
 USE_SIMULATED_VITALS = os.getenv("USE_SIMULATED_VITALS", "1") == "1"
 AI_PROVIDER = os.getenv("AI_PROVIDER", "openai").lower()
 OPENAI_API_KEY = os.getenv("OPENAI_API_KEY", "").strip()
+# Gemini: use GOOGLE_API_KEY (official SDK) or GEMINI_API_KEY
+GEMINI_API_KEY = os.getenv("GOOGLE_API_KEY", "").strip() or os.getenv("GEMINI_API_KEY", "").strip()
 patients: dict[str, dict[str, Any]] = {}
 queue_order: list[str] = []
 provider_count = 1
