@@ -7,6 +7,7 @@ Run:
 """
 
 import io
+import os
 import random
 import re
 import uuid
@@ -16,14 +17,23 @@ from typing import Any, Optional
 
 import qrcode
 from fastapi import FastAPI, Form, HTTPException, Request
+from fastapi.middleware.gzip import GZipMiddleware
 from fastapi.responses import HTMLResponse, RedirectResponse, Response
 from fastapi.staticfiles import StaticFiles
 from jinja2 import Environment, FileSystemLoader
+from starlette.middleware.httpsredirect import HTTPSRedirectMiddleware
+from starlette.middleware.trustedhost import TrustedHostMiddleware
 
 # -----------------------------------------------------------------------------
 # App + storage
 # -----------------------------------------------------------------------------
 APP_VERSION = "3.1"
+APP_ENV = os.getenv("APP_ENV", "development").lower()
+PORT = int(os.getenv("PORT", "8000"))
+HOST = os.getenv("HOST", "0.0.0.0")
+FORCE_HTTPS = os.getenv("FORCE_HTTPS", "0") == "1"
+ENABLE_DOCS = os.getenv("ENABLE_DOCS", "1" if APP_ENV != "production" else "0") == "1"
+TRUSTED_HOSTS = [h.strip() for h in os.getenv("TRUSTED_HOSTS", "*").split(",") if h.strip()] or ["*"]
 patients: dict[str, dict[str, Any]] = {}
 queue_order: list[str] = []
 provider_count = 1
@@ -34,7 +44,16 @@ arrival_windows_count = {"now": 0, "soon": 0, "later": 0}
 _TEMPLATES_DIR = Path(__file__).resolve().parent / "templates"
 _STATIC_DIR = Path(__file__).resolve().parent / "static"
 
-app = FastAPI(title="CarePilot Urgent")
+app = FastAPI(
+    title="CarePilot Urgent",
+    docs_url="/docs" if ENABLE_DOCS else None,
+    redoc_url="/redoc" if ENABLE_DOCS else None,
+    openapi_url="/openapi.json" if ENABLE_DOCS else None,
+)
+app.add_middleware(GZipMiddleware, minimum_size=500)
+app.add_middleware(TrustedHostMiddleware, allowed_hosts=TRUSTED_HOSTS)
+if FORCE_HTTPS:
+    app.add_middleware(HTTPSRedirectMiddleware)
 app.mount("/static", StaticFiles(directory=str(_STATIC_DIR)), name="static")
 env = Environment(loader=FileSystemLoader(str(_TEMPLATES_DIR)))
 
@@ -363,7 +382,17 @@ def home():
 
 @app.get("/api/ping")
 def api_ping():
-    return {"status": "ok", "app": "CarePilot Urgent", "version": APP_VERSION}
+    return {"status": "ok", "app": "CarePilot Urgent", "version": APP_VERSION, "env": APP_ENV}
+
+
+@app.get("/healthz")
+def healthz():
+    return {"status": "ok"}
+
+
+@app.get("/readyz")
+def readyz():
+    return {"status": "ready", "patients_loaded": len(patients), "queue_size": len(_queue_active())}
 
 
 @app.get("/intake", response_class=HTMLResponse)
@@ -551,4 +580,4 @@ def demo_reset():
 
 if __name__ == "__main__":
     import uvicorn
-    uvicorn.run("app:app", host="0.0.0.0", port=8000, reload=True)
+    uvicorn.run("app:app", host=HOST, port=PORT, reload=APP_ENV != "production")
