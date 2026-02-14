@@ -1207,12 +1207,33 @@ if not _SPA_BUILD:
         return render("kiosk_camera.html", page="kiosk_camera")
 
 
+def _camera_placeholder_jpeg() -> bytes:
+    """Single gray frame with text when no camera (e.g. on Render)."""
+    try:
+        from PIL import Image, ImageDraw
+        img = Image.new("RGB", (640, 360), (60, 60, 60))
+        draw = ImageDraw.Draw(img)
+        draw.text((120, 160), "Camera not available", fill=(200, 200, 200))
+        draw.text((140, 200), "Use code entry above", fill=(160, 160, 160))
+        buf = io.BytesIO()
+        img.save(buf, format="JPEG", quality=80)
+        return buf.getvalue()
+    except Exception:
+        return b""
+
+
 @app.get("/camera/stream")
 def camera_stream():
     try:
         manager = _camera()
-    except Exception as ex:
-        raise HTTPException(503, f"Camera unavailable: {ex}")
+    except Exception:
+        # No camera (e.g. Render): serve one placeholder frame so the page doesn't break
+        one_frame = _camera_placeholder_jpeg()
+        if not one_frame:
+            raise HTTPException(503, "Camera unavailable.")
+        boundary = b"frame"
+        body = b"--" + boundary + b"\r\nContent-Type: image/jpeg\r\n\r\n" + one_frame + b"\r\n"
+        return StreamingResponse(iter([body]), media_type="multipart/x-mixed-replace; boundary=" + boundary.decode())
 
     def frame_generator():
         while True:
@@ -1226,10 +1247,11 @@ def camera_stream():
 
 @app.get("/api/camera/last-scan")
 def api_camera_last_scan():
+    """Returns latest QR scan. When no camera (e.g. cloud), returns empty so kiosk uses manual entry."""
     try:
         manager = _camera()
-    except Exception as ex:
-        raise HTTPException(503, f"Camera unavailable: {ex}")
+    except Exception:
+        return {"value": "", "ts": 0.0, "fresh": False}
     value, ts = manager.last_scan()
     now = time.time()
     fresh = bool(value) and (now - ts) <= 2.0
