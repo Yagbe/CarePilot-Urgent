@@ -33,6 +33,20 @@ Open: `http://localhost:8000/`
 - `GET /staff` -> Staff queue operations (protected)
 - `GET /analytics` -> Staff analytics (protected)
 
+Dedicated station URLs for multi-computer tests:
+- `GET /patient-station` -> Patient computer
+- `GET /kiosk-station` -> Kiosk computer
+- `GET /waiting-room-station` -> Waiting room display computer/TV
+- `GET /staff-station` -> Staff computer (redirects to staff login)
+
+### 4-computer live test setup
+
+Use the same base host/IP and open one path per device:
+- Patient machine: `http://<HOST-IP>:8000/patient-station`
+- Kiosk machine: `http://<HOST-IP>:8000/kiosk-station`
+- Waiting room machine: `http://<HOST-IP>:8000/waiting-room-station`
+- Staff machine: `http://<HOST-IP>:8000/staff-station`
+
 ---
 
 ## 3) Default Staff Login (Current Demo Setup)

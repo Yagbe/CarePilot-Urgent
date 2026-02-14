@@ -25,22 +25,38 @@
       <p class="muted">Choose your role-specific experience. Each area is isolated for real clinic workflows.</p>
     </div>
 
-    <div class="grid three" style="margin-top:1rem;">
+    <div class="grid two" style="margin-top:1rem;">
       <div class="card">
         <h2 class="title">Patient Access</h2>
         <p class="muted">Complete intake and receive your QR/token for check-in.</p>
-        <a class="btn" href="/intake">Open Patient Intake</a>
+        <a class="btn" href="/patient-station">Open Patient Station</a>
       </div>
       <div class="card">
         <h2 class="title">Kiosk Station</h2>
         <p class="muted">Front-desk kiosk mode for token or code check-in only.</p>
-        <a class="btn" href="/kiosk">Open Kiosk</a>
+        <a class="btn" href="/kiosk-station">Open Kiosk Station</a>
+      </div>
+      <div class="card">
+        <h2 class="title">Waiting Room Display</h2>
+        <p class="muted">Public token-only queue board for TVs and wall monitors.</p>
+        <a class="btn" href="/waiting-room-station">Open Waiting Room Screen</a>
       </div>
       <div class="card">
         <h2 class="title">Staff Workspace</h2>
         <p class="muted">Secure staff operations, live queue management, and analytics.</p>
-        <a class="btn" href="/staff/login">Staff Sign In</a>
+        <a class="btn" href="/staff-station">Open Staff Station</a>
       </div>
+    </div>
+
+    <div class="card" style="margin-top:1rem;">
+      <h3 class="title">Multi-Computer Test URLs</h3>
+      <p class="muted">Use one URL per computer in your live test:</p>
+      <ul class="muted">
+        <li>Patient computer: <strong>/patient-station</strong></li>
+        <li>Kiosk computer: <strong>/kiosk-station</strong></li>
+        <li>Waiting room TV/computer: <strong>/waiting-room-station</strong></li>
+        <li>Staff computer: <strong>/staff-station</strong></li>
+      </ul>
     </div>
   </main>
 </body>

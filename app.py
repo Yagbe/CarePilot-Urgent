@@ -422,6 +422,31 @@ def patient_portal():
     return RedirectResponse("/intake", status_code=302)
 
 
+@app.get("/patient-station", response_class=HTMLResponse)
+def patient_station():
+    return RedirectResponse("/intake", status_code=302)
+
+
+@app.get("/kiosk-station", response_class=HTMLResponse)
+def kiosk_station():
+    return RedirectResponse("/kiosk", status_code=302)
+
+
+@app.get("/waiting-room", response_class=HTMLResponse)
+def waiting_room_station():
+    return RedirectResponse("/display", status_code=302)
+
+
+@app.get("/waiting-room-station", response_class=HTMLResponse)
+def waiting_room_station_alt():
+    return RedirectResponse("/display", status_code=302)
+
+
+@app.get("/staff-station", response_class=HTMLResponse)
+def staff_station():
+    return RedirectResponse("/staff/login", status_code=302)
+
+
 @app.get("/api/ping")
 def api_ping():
     return {"status": "ok", "app": "CarePilot Urgent", "version": APP_VERSION, "env": APP_ENV}
