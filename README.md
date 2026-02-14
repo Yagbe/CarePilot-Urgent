@@ -80,6 +80,7 @@ Key variables:
 - `CAMERA_INDEX=0`
 - `CAM_W=1280`
 - `CAM_H=720`
+- `CAMERA_PIPELINE=` (optional GStreamer pipeline for Jetson)
 
 ---
 
@@ -93,6 +94,7 @@ Key variables:
 - `GET /camera/stream` -> MJPEG camera stream for camera kiosk
 - `GET /api/camera/last-scan` -> latest QR text + freshness
 - `POST /api/kiosk-checkin` -> shared kiosk check-in API
+- `WS /ws/queue` -> real-time queue updates for display/staff
 
 ---
 

@@ -23,7 +23,7 @@
 
   <main class="container">
     <h1 class="title">Waiting Room Display</h1>
-    <p class="muted">Token-only queue (privacy-safe). Auto-refresh every 2 seconds.</p>
+    <p class="muted">Token-only queue (privacy-safe). Real-time updates enabled.</p>
     <p class="microcopy">This screen contains no medical details.</p>
     <div id="queue" class="table-like"></div>
   </main>
@@ -43,11 +43,26 @@
       q.innerHTML = items.map(function (i) {
         return '<div class="patient-row">' +
           '<div style="display:flex;justify-content:space-between;gap:1rem;align-items:center;">' +
-            '<div><strong>' + esc(i.token) + '</strong><br><span class="muted">Estimated wait: ' + esc(i.estimated_wait_min) + ' min</span></div>' +
+            '<div><strong>' + esc(i.token) + '</strong><br>' +
+            '<span class="muted">Estimated wait: ' + esc(i.estimated_wait_min) + ' min</span><br>' +
+            '<span class="muted">Position: #' + esc(i.position_in_line) + ' • Providers: ' + esc(i.providers_active) + '</span><br>' +
+            '<span class="microcopy">' + esc(i.eta_explanation || '') + '</span></div>' +
             '<span class="status-pill">' + esc(i.status_label) + '</span>' +
           '</div>' +
         '</div>';
       }).join('');
+    }
+    function connectWs() {
+      const proto = location.protocol === 'https:' ? 'wss' : 'ws';
+      const ws = new WebSocket(proto + '://' + location.host + '/ws/queue');
+      ws.onmessage = function (event) {
+        try {
+          const payload = JSON.parse(event.data);
+          if (payload && payload.items) render(payload.items);
+        } catch (e) {}
+      };
+      ws.onclose = function () { setTimeout(connectWs, 1200); };
+      ws.onerror = function () { ws.close(); };
     }
     function poll() {
       fetch('/api/queue')
@@ -56,6 +71,7 @@
         .catch(function () { render([]); });
     }
     poll();
+    connectWs();
     setInterval(poll, 2000);
   </script>
 </body>

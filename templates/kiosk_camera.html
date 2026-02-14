@@ -72,7 +72,7 @@
       let scanningEnabled = true;
       let submitting = false;
       let cooldownUntil = 0;
-      let lastTsHandled = 0;
+      let lastProcessedValue = '';
 
       function setStatus(msg) {
         statusText.textContent = msg;
@@ -98,7 +98,7 @@
       function showSuccess(data) {
         tokenOut.textContent = data.token || 'UC-0000';
         waitOut.textContent = String(data.estimated_wait_min || 0);
-        messageOut.textContent = data.message || 'Checked in.';
+        messageOut.textContent = 'Checked in \u2705 ' + (data.message || '');
         successCard.style.display = 'block';
         beep();
       }
@@ -115,12 +115,12 @@
           if (data.ok && data.checked_in) {
             showSuccess(data);
             scanningEnabled = false;
-            cooldownUntil = Date.now() + 5000;
-            setStatus('Checked in. Scan paused for 5 seconds...');
+            cooldownUntil = Date.now() + 3000;
+            setStatus('Checked in. Scan paused for 3 seconds...');
             setTimeout(function () {
               scanningEnabled = true;
               setStatus('Scanning for QR...');
-            }, 5000);
+            }, 3000);
           } else {
             setStatus(data.message || 'Code not found.');
           }
@@ -137,9 +137,10 @@
           const r = await fetch('/api/camera/last-scan');
           if (!r.ok) return;
           const data = await r.json();
-          if (data.fresh && data.value && data.ts && data.ts !== lastTsHandled) {
-            lastTsHandled = data.ts;
-            await submitCode(String(data.value), true);
+          const v = String(data.value || '').trim();
+          if (data.fresh && v && v !== lastProcessedValue) {
+            lastProcessedValue = v;
+            await submitCode(v, true);
           }
         } catch (err) {
           setStatus('Camera unavailable. Use manual fallback.');
@@ -158,7 +159,7 @@
         setStatus('Scanning for QR...');
       });
 
-      setInterval(pollLastScan, 250);
+      setInterval(pollLastScan, 150);
       setStatus('Scanning for QR...');
     })();
   </script>

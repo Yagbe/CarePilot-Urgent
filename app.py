@@ -7,6 +7,7 @@ Run:
 """
 
 import io
+import json
 import hashlib
 import hmac
 import os
@@ -20,7 +21,7 @@ from pathlib import Path
 from typing import Any, Optional
 
 import qrcode
-from fastapi import FastAPI, Form, HTTPException, Request
+from fastapi import FastAPI, Form, HTTPException, Request, WebSocket, WebSocketDisconnect
 from fastapi.middleware.gzip import GZipMiddleware
 from fastapi.responses import HTMLResponse, RedirectResponse, Response, StreamingResponse
 from fastapi.staticfiles import StaticFiles
@@ -45,12 +46,15 @@ STAFF_SESSION_COOKIE = "carepilot_staff_session"
 CAMERA_INDEX = int(os.getenv("CAMERA_INDEX", "0"))
 CAM_W = int(os.getenv("CAM_W", "1280"))
 CAM_H = int(os.getenv("CAM_H", "720"))
+CAMERA_PIPELINE = os.getenv("CAMERA_PIPELINE", "").strip()
 patients: dict[str, dict[str, Any]] = {}
 queue_order: list[str] = []
 provider_count = 1
 demo_mode = False
 issued_tokens: set[str] = set()
 arrival_windows_count = {"now": 0, "soon": 0, "later": 0}
+last_checkin_by_code: dict[str, float] = {}
+WS_CLIENTS: set[WebSocket] = set()
 
 _TEMPLATES_DIR = Path(__file__).resolve().parent / "templates"
 _STATIC_DIR = Path(__file__).resolve().parent / "static"
@@ -75,10 +79,11 @@ except Exception:
 
 
 class CameraManager:
-    def __init__(self, index: int, width: int, height: int) -> None:
+    def __init__(self, index: int, width: int, height: int, pipeline: str = "") -> None:
         self.index = index
         self.width = width
         self.height = height
+        self.pipeline = pipeline
         self._cap = None
         self._thread: Optional[threading.Thread] = None
         self._running = False
@@ -95,9 +100,12 @@ class CameraManager:
             raise RuntimeError("OpenCV is not available.")
         if self._running:
             return
-        cap = cv2.VideoCapture(self.index)
+        if self.pipeline:
+            cap = cv2.VideoCapture(self.pipeline, cv2.CAP_GSTREAMER)
+        else:
+            cap = cv2.VideoCapture(self.index)
         if not cap.isOpened():
-            raise RuntimeError(f"Unable to open camera index {self.index}.")
+            raise RuntimeError(f"Unable to open camera ({self.pipeline or self.index}).")
         cap.set(cv2.CAP_PROP_FRAME_WIDTH, self.width)
         cap.set(cv2.CAP_PROP_FRAME_HEIGHT, self.height)
         self._cap = cap
@@ -175,7 +183,7 @@ camera_manager: Optional[CameraManager] = None
 def _camera() -> CameraManager:
     global camera_manager
     if camera_manager is None:
-        camera_manager = CameraManager(CAMERA_INDEX, CAM_W, CAM_H)
+        camera_manager = CameraManager(CAMERA_INDEX, CAM_W, CAM_H, CAMERA_PIPELINE)
     if not camera_manager._running:
         camera_manager.start()
     return camera_manager
@@ -336,17 +344,45 @@ def _resolve_code(code: str) -> Optional[str]:
     return None
 
 
+def _lane_from_complexity(complexity: str) -> str:
+    c = (complexity or "").lower()
+    if c.startswith("low"):
+        return "Fast"
+    if c.startswith("high"):
+        return "Complex"
+    return "Standard"
+
+
 def _simulate_wait_map(pids: list[str], providers: int) -> dict[str, int]:
+    if not pids:
+        return {}
+    providers = max(1, providers)
     slots = [0] * max(1, providers)
     wait: dict[str, int] = {}
+    with_meta: list[tuple[str, int, str]] = []
     for pid in pids:
-        p = patients.get(pid)
-        if not p:
-            continue
+        p = patients.get(pid, {})
         dur = int(p.get("ai_result", {}).get("estimated_visit_duration_minutes", 20))
+        lane = _lane_from_complexity(p.get("ai_result", {}).get("operational_complexity", ""))
+        with_meta.append((pid, dur, lane))
+
+    fast_queue = [x for x in with_meta if x[2] == "Fast"]
+    other_queue = [x for x in with_meta if x[2] != "Fast"]
+    has_fast = bool(fast_queue)
+    i = 0
+    # Reserve at least one out of every three assignment opportunities for Fast lane.
+    while fast_queue or other_queue:
+        reserve_fast = has_fast and (i % 3 == 0)
+        if reserve_fast and fast_queue:
+            pid, dur, _lane = fast_queue.pop(0)
+        elif other_queue:
+            pid, dur, _lane = other_queue.pop(0)
+        else:
+            pid, dur, _lane = fast_queue.pop(0)
         idx = slots.index(min(slots))
         wait[pid] = slots[idx]
         slots[idx] += dur
+        i += 1
     return wait
 
 
@@ -357,13 +393,22 @@ def _queue_active() -> list[str]:
 def _public_queue_items() -> list[dict[str, Any]]:
     active = _queue_active()
     waits = _simulate_wait_map(active, provider_count)
+    now = datetime.utcnow().isoformat()
     out = []
-    for pid in active:
+    for pos, pid in enumerate(active, start=1):
         p = patients[pid]
+        typical = int(p.get("ai_result", {}).get("estimated_visit_duration_minutes", 20))
         out.append({
             "token": p.get("token"),
             "status_label": status_label(p.get("status", "waiting")),
             "estimated_wait_min": waits.get(pid, 0),
+            "position_in_line": pos,
+            "providers_active": provider_count,
+            "updated_at": now,
+            "eta_explanation": (
+                f"You're #{pos} in line • {provider_count} provider(s) • "
+                f"Typical visit {typical}-{typical + 10} min • Updated 0s ago"
+            ),
         })
     return out
 
@@ -375,6 +420,7 @@ def _staff_queue_items() -> list[dict[str, Any]]:
     for pid in active:
         p = patients[pid]
         ai = p.get("ai_result", {})
+        lane = _lane_from_complexity(ai.get("operational_complexity", ""))
         out.append({
             "id": pid,
             "token": p.get("token"),
@@ -394,6 +440,7 @@ def _staff_queue_items() -> list[dict[str, Any]]:
             "chief_complaint": ai.get("chief_complaint", ""),
             "symptom_list": ai.get("symptom_list", []),
             "suggested_resources": ai.get("suggested_resources", []),
+            "lane": lane,
         })
     return out
 
@@ -496,9 +543,40 @@ def _wait_for_pid(pid: str) -> int:
 
 
 def _kiosk_checkin_result(code: str) -> dict[str, Any]:
+    raw = (code or "").strip().upper()
+    if raw:
+        last = last_checkin_by_code.get(raw, 0.0)
+        if time.time() - last < 3.0:
+            return {
+                "ok": False,
+                "checked_in": False,
+                "message": "Scan cooldown active. Please wait 3 seconds.",
+                "token": "",
+                "estimated_wait_min": 0,
+            }
     pid = _resolve_code(code)
     if not pid:
         return {"ok": False, "checked_in": False, "message": "Code not found.", "token": "", "estimated_wait_min": 0}
+
+    pid_last = last_checkin_by_code.get(pid, 0.0)
+    if time.time() - pid_last < 3.0:
+        return {
+            "ok": False,
+            "checked_in": False,
+            "message": "Scan cooldown active. Please wait 3 seconds.",
+            "token": "",
+            "estimated_wait_min": 0,
+        }
+
+    if raw:
+        now = time.time()
+        last_checkin_by_code[raw] = now
+        last_checkin_by_code[pid] = now
+        if len(last_checkin_by_code) > 400:
+            cutoff = now - 60.0
+            for k, ts in list(last_checkin_by_code.items()):
+                if ts < cutoff:
+                    last_checkin_by_code.pop(k, None)
 
     p = patients[pid]
     if p.get("status") != "pending":
@@ -554,6 +632,39 @@ def _is_staff_authenticated(request: Request) -> bool:
 def _require_staff(request: Request) -> None:
     if not _is_staff_authenticated(request):
         raise HTTPException(status_code=401, detail="Staff authentication required.")
+
+
+def _lane_counts(items: Optional[list[dict[str, Any]]] = None) -> dict[str, int]:
+    data = items if items is not None else _staff_queue_items()
+    counts = {"Fast": 0, "Standard": 0, "Complex": 0}
+    for i in data:
+        lane = i.get("lane", "Standard")
+        if lane in counts:
+            counts[lane] += 1
+    return counts
+
+
+def _queue_snapshot_payload() -> dict[str, Any]:
+    return {
+        "type": "queue_update",
+        "provider_count": provider_count,
+        "updated_at": datetime.utcnow().isoformat(),
+        "items": _public_queue_items(),
+    }
+
+
+async def _broadcast_queue_update() -> None:
+    if not WS_CLIENTS:
+        return
+    payload = _queue_snapshot_payload()
+    stale: list[WebSocket] = []
+    for ws in WS_CLIENTS:
+        try:
+            await ws.send_text(json.dumps(payload))
+        except Exception:
+            stale.append(ws)
+    for ws in stale:
+        WS_CLIENTS.discard(ws)
 
 
 # -----------------------------------------------------------------------------
@@ -688,8 +799,10 @@ def kiosk_page():
 
 @app.post("/kiosk", response_class=HTMLResponse)
 @app.post("/kiosk/", response_class=HTMLResponse)
-def kiosk_checkin(code: str = Form("")):
+async def kiosk_checkin(code: str = Form("")):
     result = _kiosk_checkin_result(code)
+    if result.get("ok"):
+        await _broadcast_queue_update()
     return render(
         "kiosk.html",
         page="kiosk",
@@ -736,8 +849,11 @@ def api_camera_last_scan():
 
 
 @app.post("/api/kiosk-checkin")
-def api_kiosk_checkin(code: str = Form("")):
-    return _kiosk_checkin_result(code)
+async def api_kiosk_checkin(code: str = Form("")):
+    result = _kiosk_checkin_result(code)
+    if result.get("ok"):
+        await _broadcast_queue_update()
+    return result
 
 
 @app.get("/display", response_class=HTMLResponse)
@@ -748,6 +864,20 @@ def display_page():
 @app.get("/api/queue")
 def api_public_queue():
     return _public_queue_items()
+
+
+@app.websocket("/ws/queue")
+async def ws_queue(websocket: WebSocket):
+    await websocket.accept()
+    WS_CLIENTS.add(websocket)
+    await websocket.send_text(json.dumps(_queue_snapshot_payload()))
+    try:
+        while True:
+            await websocket.receive_text()
+    except WebSocketDisconnect:
+        WS_CLIENTS.discard(websocket)
+    except Exception:
+        WS_CLIENTS.discard(websocket)
 
 
 @app.get("/staff", response_class=HTMLResponse)
@@ -761,11 +891,17 @@ def staff_page(request: Request):
 def api_staff_queue(request: Request):
     _require_staff(request)
     items = _staff_queue_items()
-    return {"provider_count": provider_count, "avg_wait_min": _avg_wait(items), "items": items}
+    return {
+        "provider_count": provider_count,
+        "avg_wait_min": _avg_wait(items),
+        "lane_counts": _lane_counts(items),
+        "updated_at": datetime.utcnow().isoformat(),
+        "items": items,
+    }
 
 
 @app.post("/api/staff/status/{pid}")
-def api_staff_status(request: Request, pid: str, status: str = Form(...)):
+async def api_staff_status(request: Request, pid: str, status: str = Form(...)):
     _require_staff(request)
     if pid not in patients:
         raise HTTPException(404, "Patient not found.")
@@ -774,14 +910,16 @@ def api_staff_status(request: Request, pid: str, status: str = Form(...)):
     patients[pid]["status"] = status
     if status == "done":
         queue_order[:] = [x for x in queue_order if x != pid]
+    await _broadcast_queue_update()
     return {"ok": True}
 
 
 @app.post("/api/provider-count")
-def api_provider_count(request: Request, count: int = Form(...)):
+async def api_provider_count(request: Request, count: int = Form(...)):
     _require_staff(request)
     global provider_count
     provider_count = min(3, max(1, int(count)))
+    await _broadcast_queue_update()
     return {"ok": True, "provider_count": provider_count}
 
 
@@ -803,21 +941,24 @@ def api_analytics(request: Request, providers: Optional[int] = None):
         "current_queue": len(items),
         "current_avg_wait": _avg_wait(items),
         "current_peak_wait": max([i["estimated_wait_min"] for i in items], default=0),
+        "lane_counts": _lane_counts(items),
         "forecast": forecast,
     }
 
 
 @app.post("/demo/seed")
-def demo_seed(request: Request):
+async def demo_seed(request: Request):
     _require_staff(request)
     _seed_demo_patients()
+    await _broadcast_queue_update()
     return {"ok": True, "demo_mode": True}
 
 
 @app.post("/demo/reset")
-def demo_reset(request: Request):
+async def demo_reset(request: Request):
     _require_staff(request)
     _reset_state()
+    await _broadcast_queue_update()
     return {"ok": True, "demo_mode": False}
 
 

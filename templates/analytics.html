@@ -40,6 +40,11 @@
       <div class="card"><div class="muted">Predicted Peak Wait</div><div class="kpi" id="k-peak">0 min</div></div>
     </div>
 
+    <div class="card" style="margin-top:1rem;">
+      <div class="muted">Lane Routing Mix</div>
+      <div class="kpi" id="lane-mix-analytics">Fast 0 • Standard 0 • Complex 0</div>
+    </div>
+
     <div class="grid two">
       <div class="card">
         <h3 class="title">Predicted Arrivals (next 2h)</h3>
@@ -113,6 +118,9 @@
           document.getElementById('k-wait').textContent = data.current_avg_wait + ' min';
           const peak = Math.max(...data.forecast.wait_projection, data.current_peak_wait || 0);
           document.getElementById('k-peak').textContent = peak + ' min';
+          const lc = data.lane_counts || {};
+          document.getElementById('lane-mix-analytics').textContent =
+            'Fast ' + (lc.Fast || 0) + ' • Standard ' + (lc.Standard || 0) + ' • Complex ' + (lc.Complex || 0);
           document.getElementById('recommendation').textContent = data.forecast.recommendation;
           drawLineChart('arrivals-chart', data.forecast.labels, data.forecast.arrivals, '#0ea5e9');
           drawLineChart('wait-chart', data.forecast.labels, data.forecast.wait_projection, '#f59e0b');

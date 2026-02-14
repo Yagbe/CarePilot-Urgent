@@ -41,8 +41,9 @@
         <div class="kpi" id="queue-kpi">0</div>
       </div>
       <div class="card">
-        <div class="muted">Average Wait</div>
+        <div class="muted">Average Wait / Lane Mix</div>
         <div class="kpi" id="avg-wait-kpi">0 min</div>
+        <div class="microcopy" id="lane-mix">Fast 0 • Standard 0 • Complex 0</div>
       </div>
     </div>
 
@@ -133,6 +134,9 @@
           document.getElementById('provider-select').value = String(payload.provider_count);
           document.getElementById('queue-kpi').textContent = items.length;
           document.getElementById('avg-wait-kpi').textContent = payload.avg_wait_min + ' min';
+          const lc = payload.lane_counts || {};
+          document.getElementById('lane-mix').textContent =
+            'Fast ' + (lc.Fast || 0) + ' • Standard ' + (lc.Standard || 0) + ' • Complex ' + (lc.Complex || 0);
           const root = document.getElementById('staff-queue');
           if (!items.length) {
             root.innerHTML = '<div class="card muted">No patients in queue.</div>';
@@ -151,6 +155,7 @@
                 '<div>' +
                   '<strong>' + esc(i.token) + '</strong> <span class="muted">- ' + esc(i.full_name) + '</span><br>' +
                   '<span class="status-pill ' + statusClass(i.status) + '">' + esc(i.status_label) + '</span> ' +
+                  '<span class="status-pill">' + esc(i.lane || 'Standard') + ' lane</span> ' +
                   '<span class="muted">Est wait ' + esc(i.estimated_wait_min) + ' min</span>' +
                 '</div>' +
                 '<div class="btn-row">' +
@@ -205,6 +210,13 @@
     });
 
     loadQueue();
+    (function connectWs() {
+      const proto = location.protocol === 'https:' ? 'wss' : 'ws';
+      const ws = new WebSocket(proto + '://' + location.host + '/ws/queue');
+      ws.onmessage = function () { loadQueue(); };
+      ws.onclose = function () { setTimeout(connectWs, 1200); };
+      ws.onerror = function () { ws.close(); };
+    })();
     setInterval(loadQueue, 2000);
   </script>
 </body>
