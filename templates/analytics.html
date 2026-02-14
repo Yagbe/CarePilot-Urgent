@@ -7,6 +7,11 @@
   <link rel="stylesheet" href="/static/style.css">
 </head>
 <body>
+  <div class="a11y-bar" role="region" aria-label="Accessibility and language">
+    <button type="button" id="a11y-large" class="btn-a11y" aria-pressed="false">Large text</button>
+    <button type="button" id="a11y-contrast" class="btn-a11y" aria-pressed="false">High contrast</button>
+    <span class="lang-toggle" aria-label="Language"><button type="button" data-lang="en">EN</button><button type="button" data-lang="ar">AR</button></span>
+  </div>
   <header class="topbar">
     <div class="topbar-inner">
       <div class="brand-wrap">
@@ -38,6 +43,11 @@
       <div class="card"><div class="muted">Current Queue</div><div class="kpi" id="k-queue">0</div></div>
       <div class="card"><div class="muted">Current Avg Wait</div><div class="kpi" id="k-wait">0 min</div></div>
       <div class="card"><div class="muted">Predicted Peak Wait</div><div class="kpi" id="k-peak">0 min</div></div>
+    </div>
+
+    <div class="card" style="margin-top:1rem;">
+      <div class="muted">Lobby Occupancy Score</div>
+      <div class="kpi" id="k-lobby">Low</div>
     </div>
 
     <div class="card" style="margin-top:1rem;">
@@ -105,19 +115,26 @@
     function loadAnalytics() {
       const providers = document.getElementById('providers').value;
       document.getElementById('providers-value').textContent = providers;
-      fetch('/api/analytics?providers=' + encodeURIComponent(providers))
-        .then(function (r) {
+      Promise.all([
+        fetch('/api/analytics?providers=' + encodeURIComponent(providers)),
+        fetch('/api/lobby-load')
+      ])
+        .then(function (arr) {
+          const r = arr[0];
           if (r.status === 401) {
             window.location = '/staff/login';
             throw new Error('unauthorized');
           }
-          return r.json();
+          return Promise.all([r.json(), arr[1].json()]);
         })
-        .then(function (data) {
+        .then(function (out) {
+          const data = out[0];
+          const lobby = out[1];
           document.getElementById('k-queue').textContent = data.current_queue;
           document.getElementById('k-wait').textContent = data.current_avg_wait + ' min';
           const peak = Math.max(...data.forecast.wait_projection, data.current_peak_wait || 0);
           document.getElementById('k-peak').textContent = peak + ' min';
+          document.getElementById('k-lobby').textContent = lobby.level + ' (' + lobby.queue_size + ')';
           const lc = data.lane_counts || {};
           document.getElementById('lane-mix-analytics').textContent =
             'Fast ' + (lc.Fast || 0) + ' • Standard ' + (lc.Standard || 0) + ' • Complex ' + (lc.Complex || 0);
@@ -131,5 +148,6 @@
     loadAnalytics();
     setInterval(loadAnalytics, 4000);
   </script>
+  <script src="/static/ux.js"></script>
 </body>
 </html>

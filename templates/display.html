@@ -7,6 +7,11 @@
   <link rel="stylesheet" href="/static/style.css">
 </head>
 <body>
+  <div class="a11y-bar" role="region" aria-label="Accessibility and language">
+    <button type="button" id="a11y-large" class="btn-a11y" aria-pressed="false">Large text</button>
+    <button type="button" id="a11y-contrast" class="btn-a11y" aria-pressed="false">High contrast</button>
+    <span class="lang-toggle" aria-label="Language"><button type="button" data-lang="en">EN</button><button type="button" data-lang="ar">AR</button></span>
+  </div>
   <header class="topbar">
     <div class="topbar-inner">
       <div class="brand-wrap">
@@ -25,6 +30,10 @@
     <h1 class="title">Waiting Room Display</h1>
     <p class="muted">Token-only queue (privacy-safe). Real-time updates enabled.</p>
     <p class="microcopy">This screen contains no medical details.</p>
+    <div class="card" style="margin-bottom:.8rem;">
+      <div class="muted">Lobby Occupancy</div>
+      <div class="kpi" id="lobby-load">Low</div>
+    </div>
     <div id="queue" class="table-like"></div>
   </main>
 
@@ -71,6 +80,13 @@
       ws.onclose = function () { setTimeout(connectWs, 1200); };
       ws.onerror = function () { ws.close(); };
     }
+    function loadLobby() {
+      fetch('/api/lobby-load')
+        .then(function (r) { return r.json(); })
+        .then(function (x) {
+          document.getElementById('lobby-load').textContent = x.level + ' (' + x.queue_size + ' waiting)';
+        });
+    }
     function poll() {
       fetch('/api/queue')
         .then(function (r) { return r.json(); })
@@ -78,8 +94,11 @@
         .catch(function () { render([]); });
     }
     poll();
+    loadLobby();
     connectWs();
     setInterval(poll, 2000);
+    setInterval(loadLobby, 4000);
   </script>
+  <script src="/static/ux.js"></script>
 </body>
 </html>

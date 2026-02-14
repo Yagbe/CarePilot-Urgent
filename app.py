@@ -17,6 +17,7 @@ import asyncio
 import threading
 import time
 import uuid
+import sqlite3
 from collections import deque
 from datetime import datetime, timedelta
 from pathlib import Path
@@ -24,12 +25,34 @@ from typing import Any, Optional
 
 import qrcode
 from fastapi import FastAPI, Form, HTTPException, Request, WebSocket, WebSocketDisconnect
+from pydantic import BaseModel
 from fastapi.middleware.gzip import GZipMiddleware
-from fastapi.responses import HTMLResponse, RedirectResponse, Response, StreamingResponse
+from fastapi.responses import FileResponse, HTMLResponse, RedirectResponse, Response, StreamingResponse
 from fastapi.staticfiles import StaticFiles
 from jinja2 import Environment, FileSystemLoader
 from starlette.middleware.httpsredirect import HTTPSRedirectMiddleware
 from starlette.middleware.trustedhost import TrustedHostMiddleware
+
+# -----------------------------------------------------------------------------
+# JSON API request models (for React / Best UI/UX stack)
+# -----------------------------------------------------------------------------
+class IntakeRequest(BaseModel):
+    first_name: str = ""
+    last_name: str = ""
+    phone: str = ""
+    dob: str = ""
+    symptoms: str = ""
+    duration_text: str = "1 day"
+    arrival_window: str = "now"
+
+
+class StaffLoginRequest(BaseModel):
+    password: str = ""
+
+
+class KioskCheckinRequest(BaseModel):
+    code: str = ""
+
 
 # -----------------------------------------------------------------------------
 # App + storage
@@ -49,6 +72,11 @@ CAMERA_INDEX = int(os.getenv("CAMERA_INDEX", "0"))
 CAM_W = int(os.getenv("CAM_W", "1280"))
 CAM_H = int(os.getenv("CAM_H", "720"))
 CAMERA_PIPELINE = os.getenv("CAMERA_PIPELINE", "").strip()
+DB_PATH = os.getenv("DB_PATH", str(Path(__file__).resolve().parent / "carepilot.db"))
+DEMO_MODE_FLAG = os.getenv("DEMO_MODE", "0") == "1"
+USE_SIMULATED_VITALS = os.getenv("USE_SIMULATED_VITALS", "1") == "1"
+AI_PROVIDER = os.getenv("AI_PROVIDER", "openai").lower()
+OPENAI_API_KEY = os.getenv("OPENAI_API_KEY", "").strip()
 patients: dict[str, dict[str, Any]] = {}
 queue_order: list[str] = []
 provider_count = 1
@@ -62,10 +90,92 @@ AUDIT_LOG = deque(maxlen=200)
 LOGIN_ATTEMPTS_BY_IP: dict[str, list[float]] = {}
 
 if APP_ENV == "production" and STAFF_ACCESS_PASSWORD == "1234":
-    raise RuntimeError("Refusing to start with default staff password in production.")
+    raise RuntimeError(
+        "Refusing to start with default staff password in production. "
+        "Set STAFF_ACCESS_PASSWORD in your environment (e.g. Render Dashboard → Environment)."
+    )
+
+
+def _db_conn() -> sqlite3.Connection:
+    conn = sqlite3.connect(DB_PATH, check_same_thread=False)
+    conn.row_factory = sqlite3.Row
+    return conn
+
+
+DB_CONN = _db_conn()
+
+
+def _init_db() -> None:
+    with STATE_LOCK:
+        DB_CONN.execute(
+            """
+            CREATE TABLE IF NOT EXISTS patients (
+              pid TEXT PRIMARY KEY,
+              token TEXT,
+              first_name TEXT,
+              last_name TEXT,
+              status TEXT,
+              created_at TEXT,
+              checked_in_at TEXT
+            )
+            """
+        )
+        DB_CONN.execute(
+            """
+            CREATE TABLE IF NOT EXISTS vitals (
+              id INTEGER PRIMARY KEY AUTOINCREMENT,
+              pid TEXT,
+              token TEXT,
+              device_id TEXT,
+              spo2 REAL,
+              hr REAL,
+              temp_c REAL,
+              bp_sys REAL,
+              bp_dia REAL,
+              confidence REAL,
+              ts TEXT,
+              simulated INTEGER DEFAULT 0
+            )
+            """
+        )
+        DB_CONN.execute(
+            """
+            CREATE TABLE IF NOT EXISTS queue_events (
+              id INTEGER PRIMARY KEY AUTOINCREMENT,
+              event_type TEXT,
+              pid TEXT,
+              token TEXT,
+              payload TEXT,
+              ts TEXT
+            )
+            """
+        )
+        DB_CONN.execute(
+            """
+            CREATE TABLE IF NOT EXISTS ai_conversations (
+              id INTEGER PRIMARY KEY AUTOINCREMENT,
+              pid TEXT,
+              role TEXT,
+              message TEXT,
+              ts TEXT
+            )
+            """
+        )
+        DB_CONN.execute(
+            """
+            CREATE TABLE IF NOT EXISTS audit_log (
+              id INTEGER PRIMARY KEY AUTOINCREMENT,
+              event_type TEXT,
+              payload TEXT,
+              ts TEXT
+            )
+            """
+        )
+        DB_CONN.commit()
 
 _TEMPLATES_DIR = Path(__file__).resolve().parent / "templates"
 _STATIC_DIR = Path(__file__).resolve().parent / "static"
+_FRONTEND_DIST = Path(__file__).resolve().parent / "frontend" / "dist"
 
 app = FastAPI(
     title="CarePilot Urgent",
@@ -78,6 +188,11 @@ app.add_middleware(TrustedHostMiddleware, allowed_hosts=TRUSTED_HOSTS)
 if FORCE_HTTPS:
     app.add_middleware(HTTPSRedirectMiddleware)
 app.mount("/static", StaticFiles(directory=str(_STATIC_DIR)), name="static")
+_SPA_BUILD = (_FRONTEND_DIST / "index.html").is_file()
+if _FRONTEND_DIST.is_dir():
+    _ASSETS_DIR = _FRONTEND_DIST / "assets"
+    if _ASSETS_DIR.is_dir():
+        app.mount("/assets", StaticFiles(directory=str(_ASSETS_DIR)), name="assets")
 env = Environment(loader=FileSystemLoader(str(_TEMPLATES_DIR)))
 
 try:
@@ -215,13 +330,24 @@ def render(name: str, **kwargs: Any) -> str:
 
 def _audit(event_type: str, details: dict[str, Any]) -> None:
     with STATE_LOCK:
-        AUDIT_LOG.append(
-            {
-                "ts": datetime.utcnow().isoformat(),
-                "event_type": event_type,
-                "details": details,
-            }
+        ts = datetime.utcnow().isoformat()
+        event = {"ts": ts, "event_type": event_type, "details": details}
+        AUDIT_LOG.append(event)
+        DB_CONN.execute(
+            "INSERT INTO audit_log(event_type, payload, ts) VALUES(?,?,?)",
+            (event_type, json.dumps(details), ts),
         )
+        DB_CONN.commit()
+
+
+def _queue_event(event_type: str, pid: str = "", token: str = "", payload: Optional[dict[str, Any]] = None) -> None:
+    data = payload or {}
+    with STATE_LOCK:
+        DB_CONN.execute(
+            "INSERT INTO queue_events(event_type, pid, token, payload, ts) VALUES(?,?,?,?,?)",
+            (event_type, pid, token, json.dumps(data), datetime.utcnow().isoformat()),
+        )
+        DB_CONN.commit()
 
 
 # -----------------------------------------------------------------------------
@@ -481,6 +607,7 @@ def _staff_queue_items() -> list[dict[str, Any]]:
             "suggested_resources": ai.get("suggested_resources", []),
             "lane": lane,
             "resource_tags": tags,
+            "vitals_latest": _latest_vitals_for_pid(pid),
         })
     return out
 
@@ -570,7 +697,23 @@ def _seed_demo_patients() -> None:
         }
             queue_order.append(pid)
             arrival_windows_count[window] += 1
+            DB_CONN.execute(
+                """
+                INSERT OR REPLACE INTO patients(pid, token, first_name, last_name, status, created_at, checked_in_at)
+                VALUES(?,?,?,?,?,?,?)
+                """,
+                (
+                    pid,
+                    patients[pid]["token"],
+                    first,
+                    last,
+                    "waiting",
+                    patients[pid]["created_at"],
+                    patients[pid]["checked_in_at"],
+                ),
+            )
         demo_mode = True
+        DB_CONN.commit()
 
 
 def _reset_state() -> None:
@@ -583,6 +726,9 @@ def _reset_state() -> None:
         arrival_windows_count.update({"now": 0, "soon": 0, "later": 0})
         provider_count = 1
         demo_mode = False
+        DB_CONN.execute("DELETE FROM patients")
+        DB_CONN.execute("DELETE FROM vitals")
+        DB_CONN.commit()
 
 
 def _wait_for_pid(pid: str) -> int:
@@ -626,6 +772,7 @@ def _kiosk_checkin_result(code: str) -> dict[str, Any]:
         if p.get("status") != "pending":
             wait = _wait_for_pid(pid)
             _audit("checkin_repeat", {"pid": pid, "token": p.get("token"), "wait": wait})
+            _queue_event("checkin_repeat", pid=pid, token=p.get("token", ""), payload={"wait": wait})
             return {
                 "ok": True,
                 "checked_in": True,
@@ -638,9 +785,15 @@ def _kiosk_checkin_result(code: str) -> dict[str, Any]:
         p["checked_in_at"] = datetime.utcnow().isoformat()
         if pid not in queue_order:
             queue_order.append(pid)
+        DB_CONN.execute(
+            "UPDATE patients SET status=?, checked_in_at=? WHERE pid=?",
+            (p["status"], p["checked_in_at"], pid),
+        )
+        DB_CONN.commit()
 
         wait = _wait_for_pid(pid)
         _audit("checkin", {"pid": pid, "token": p.get("token"), "wait": wait})
+        _queue_event("checkin", pid=pid, token=p.get("token", ""), payload={"wait": wait})
         return {
             "ok": True,
             "checked_in": True,
@@ -728,47 +881,95 @@ async def _broadcast_queue_update() -> None:
                 WS_CLIENTS.discard(ws)
 
 
+def _latest_vitals_for_pid(pid: str) -> Optional[dict[str, Any]]:
+    with STATE_LOCK:
+        row = DB_CONN.execute(
+            """
+            SELECT pid, token, device_id, spo2, hr, temp_c, bp_sys, bp_dia, confidence, ts, simulated
+            FROM vitals WHERE pid=? ORDER BY id DESC LIMIT 1
+            """,
+            (pid,),
+        ).fetchone()
+    if not row:
+        return None
+    return dict(row)
+
+
+def _lobby_load_score() -> dict[str, Any]:
+    items = _public_queue_items()
+    q = len(items)
+    if q >= 8:
+        level = "High"
+    elif q >= 4:
+        level = "Medium"
+    else:
+        level = "Low"
+    return {"level": level, "queue_size": q, "updated_at": datetime.utcnow().isoformat()}
+
+
+def _ai_chat_reply(user_text: str) -> dict[str, Any]:
+    text = (user_text or "").strip()
+    low = text.lower()
+    red_flags = [f for f in RED_FLAG_KEYWORDS if f in low]
+    if red_flags:
+        reply = (
+            "I am an operational assistant, not a medical advisor. "
+            "Please alert clinic staff now for immediate support."
+        )
+    elif "language" in low or "arabic" in low:
+        reply = "We can support multilingual intake. Please choose your preferred language on this kiosk."
+    elif "sensor" in low or "finger" in low:
+        reply = "Please place one finger on the sensor, keep still, and wait for confirmation."
+    else:
+        reply = (
+            "I can help with check-in steps and workflow only. "
+            "Please share symptoms duration and any mobility assistance needs."
+        )
+    return {"reply": reply, "red_flags": red_flags}
+
+
 # -----------------------------------------------------------------------------
-# Routes
+# Routes (Jinja HTML only when React SPA is not built)
 # -----------------------------------------------------------------------------
-@app.get("/", response_class=HTMLResponse)
-def home():
-    return render("home.html", page="home")
+if not _SPA_BUILD:
+    @app.get("/", response_class=HTMLResponse)
+    def home():
+        return render("home.html", page="home")
 
+    @app.get("/patient", response_class=HTMLResponse)
+    def patient_portal():
+        return RedirectResponse("/intake", status_code=302)
 
-@app.get("/patient", response_class=HTMLResponse)
-def patient_portal():
-    return RedirectResponse("/intake", status_code=302)
+    @app.get("/patient-station", response_class=HTMLResponse)
+    def patient_station():
+        return RedirectResponse("/intake", status_code=302)
 
+    @app.get("/kiosk-station", response_class=HTMLResponse)
+    def kiosk_station():
+        return RedirectResponse("/kiosk", status_code=302)
 
-@app.get("/patient-station", response_class=HTMLResponse)
-def patient_station():
-    return RedirectResponse("/intake", status_code=302)
+    @app.get("/waiting-room", response_class=HTMLResponse)
+    def waiting_room_station():
+        return RedirectResponse("/display", status_code=302)
 
+    @app.get("/waiting-room-station", response_class=HTMLResponse)
+    def waiting_room_station_alt():
+        return RedirectResponse("/display", status_code=302)
 
-@app.get("/kiosk-station", response_class=HTMLResponse)
-def kiosk_station():
-    return RedirectResponse("/kiosk", status_code=302)
-
-
-@app.get("/waiting-room", response_class=HTMLResponse)
-def waiting_room_station():
-    return RedirectResponse("/display", status_code=302)
-
-
-@app.get("/waiting-room-station", response_class=HTMLResponse)
-def waiting_room_station_alt():
-    return RedirectResponse("/display", status_code=302)
-
-
-@app.get("/staff-station", response_class=HTMLResponse)
-def staff_station():
-    return RedirectResponse("/staff/login", status_code=302)
+    @app.get("/staff-station", response_class=HTMLResponse)
+    def staff_station():
+        return RedirectResponse("/staff/login", status_code=302)
 
 
 @app.get("/api/ping")
 def api_ping():
     return {"status": "ok", "app": "CarePilot Urgent", "version": APP_VERSION, "env": APP_ENV}
+
+
+@app.get("/api/demo-mode")
+def api_demo_mode():
+    with STATE_LOCK:
+        return {"demo_mode": demo_mode}
 
 
 @app.get("/healthz")
@@ -781,9 +982,10 @@ def readyz():
     return {"status": "ready", "patients_loaded": len(patients), "queue_size": len(_queue_active())}
 
 
-@app.get("/intake", response_class=HTMLResponse)
-def intake_page():
-    return render("intake.html", page="intake")
+if not _SPA_BUILD:
+    @app.get("/intake", response_class=HTMLResponse)
+    def intake_page():
+        return render("intake.html", page="intake")
 
 
 @app.post("/intake")
@@ -824,23 +1026,95 @@ def intake_submit(
         "checked_in_at": None,
         }
         arrival_windows_count[window] += 1
+        DB_CONN.execute(
+            """
+            INSERT OR REPLACE INTO patients(pid, token, first_name, last_name, status, created_at, checked_in_at)
+            VALUES(?,?,?,?,?,?,?)
+            """,
+            (
+                pid,
+                patients[pid]["token"],
+                patients[pid]["first_name"],
+                patients[pid]["last_name"],
+                patients[pid]["status"],
+                patients[pid]["created_at"],
+                patients[pid]["checked_in_at"],
+            ),
+        )
+        DB_CONN.commit()
     _audit("intake_created", {"pid": pid, "arrival_window": window})
     return RedirectResponse(request.url_for("qr_page", pid=pid), status_code=302)
 
 
-@app.get("/qr/{pid}", response_class=HTMLResponse)
-def qr_page(pid: str):
+@app.post("/api/intake")
+def api_intake_submit(body: IntakeRequest):
+    """JSON API for React frontend."""
+    first_name = (body.first_name or "").strip()
+    symptoms = (body.symptoms or "").strip()
+    _validate_dob((body.dob or "").strip())
+    if not first_name or not symptoms:
+        raise HTTPException(400, "First name and symptoms are required.")
+    window = body.arrival_window if body.arrival_window in {"now", "soon", "later"} else "now"
+    pid = next_pid()
+    age = _parse_age_from_dob((body.dob or "").strip())
+    ai = ai_structure_symptoms(symptoms, body.duration_text or "1 day", age)
+    with STATE_LOCK:
+        patients[pid] = {
+            "pid": pid,
+            "token": next_token(),
+            "first_name": first_name,
+            "last_name": (body.last_name or "").strip(),
+            "phone": (body.phone or "").strip(),
+            "dob": (body.dob or "").strip(),
+            "symptoms": symptoms,
+            "duration_text": body.duration_text or "1 day",
+            "arrival_window": window,
+            "ai_result": ai,
+            "status": "pending",
+            "created_at": datetime.utcnow().isoformat(),
+            "checked_in_at": None,
+        }
+        arrival_windows_count[window] += 1
+        DB_CONN.execute(
+            """
+            INSERT OR REPLACE INTO patients(pid, token, first_name, last_name, status, created_at, checked_in_at)
+            VALUES(?,?,?,?,?,?,?)
+            """,
+            (pid, patients[pid]["token"], patients[pid]["first_name"], patients[pid]["last_name"],
+             patients[pid]["status"], patients[pid]["created_at"], patients[pid]["checked_in_at"]),
+        )
+        DB_CONN.commit()
+    _audit("intake_created", {"pid": pid, "arrival_window": window})
+    return {"pid": pid, "token": patients[pid]["token"], "redirect": f"/qr/{pid}"}
+
+
+if not _SPA_BUILD:
+    @app.get("/qr/{pid}", response_class=HTMLResponse)
+    def qr_page(pid: str):
+        with STATE_LOCK:
+            p = patients.get(pid)
+        if not p:
+            raise HTTPException(404, "Patient not found.")
+        return render(
+            "qr.html",
+            page="qr",
+            pid=pid,
+            token=p["token"],
+            display_name=f"{p['first_name']} {(p.get('last_name') or ' ')[0]}.",
+        )
+
+
+@app.get("/api/qr/{pid}")
+def api_qr(pid: str):
+    """JSON for React frontend."""
     with STATE_LOCK:
         p = patients.get(pid)
     if not p:
         raise HTTPException(404, "Patient not found.")
-    return render(
-        "qr.html",
-        page="qr",
-        pid=pid,
-        token=p["token"],
-        display_name=f"{p['first_name']} {(p.get('last_name') or ' ')[0]}.",
-    )
+    first = p.get("first_name") or ""
+    last = (p.get("last_name") or " ")[:1]
+    display_name = f"{first} {last}.".strip() or "Patient"
+    return {"pid": pid, "token": p["token"], "display_name": display_name}
 
 
 @app.get("/qr-img/{pid}")
@@ -856,10 +1130,11 @@ def qr_image(pid: str):
     return Response(content=buf.read(), media_type="image/png")
 
 
-@app.get("/kiosk", response_class=HTMLResponse)
-@app.get("/kiosk/", response_class=HTMLResponse)
-def kiosk_page():
-    return render("kiosk.html", page="kiosk", checked_in=False, message="", token="", estimated_wait_min=0)
+if not _SPA_BUILD:
+    @app.get("/kiosk", response_class=HTMLResponse)
+    @app.get("/kiosk/", response_class=HTMLResponse)
+    def kiosk_page():
+        return render("kiosk.html", page="kiosk", checked_in=False, message="", token="", estimated_wait_min=0)
 
 
 @app.post("/kiosk", response_class=HTMLResponse)
@@ -878,10 +1153,11 @@ async def kiosk_checkin(code: str = Form("")):
     )
 
 
-@app.get("/kiosk/camera", response_class=HTMLResponse)
-@app.get("/kiosk/camera/", response_class=HTMLResponse)
-def kiosk_camera_page():
-    return render("kiosk_camera.html", page="kiosk_camera")
+if not _SPA_BUILD:
+    @app.get("/kiosk/camera", response_class=HTMLResponse)
+    @app.get("/kiosk/camera/", response_class=HTMLResponse)
+    def kiosk_camera_page():
+        return render("kiosk_camera.html", page="kiosk_camera")
 
 
 @app.get("/camera/stream")
@@ -921,9 +1197,133 @@ async def api_kiosk_checkin(code: str = Form("")):
     return result
 
 
-@app.get("/display", response_class=HTMLResponse)
-def display_page():
-    return render("display.html", page="display")
+@app.post("/api/kiosk-checkin/json")
+async def api_kiosk_checkin_json(body: KioskCheckinRequest):
+    """JSON API for React frontend."""
+    result = _kiosk_checkin_result(body.code or "")
+    if result.get("ok"):
+        await _broadcast_queue_update()
+    return result
+
+
+@app.post("/api/vitals/submit")
+async def api_vitals_submit(
+    pid: str = Form(""),
+    token: str = Form(""),
+    device_id: str = Form("jetson-01"),
+    spo2: Optional[float] = Form(None),
+    hr: Optional[float] = Form(None),
+    temp_c: Optional[float] = Form(None),
+    bp_sys: Optional[float] = Form(None),
+    bp_dia: Optional[float] = Form(None),
+    confidence: float = Form(0.9),
+    simulated: int = Form(0),
+    ts: str = Form(""),
+):
+    code = (pid or token or "").strip()
+    resolved_pid = _resolve_code(code)
+    if not resolved_pid:
+        raise HTTPException(404, "Patient not found.")
+    with STATE_LOCK:
+        p = patients.get(resolved_pid)
+        if not p:
+            raise HTTPException(404, "Patient not found.")
+        vitals_ts = ts or datetime.utcnow().isoformat()
+        DB_CONN.execute(
+            """
+            INSERT INTO vitals(pid, token, device_id, spo2, hr, temp_c, bp_sys, bp_dia, confidence, ts, simulated)
+            VALUES(?,?,?,?,?,?,?,?,?,?,?)
+            """,
+            (
+                resolved_pid,
+                p.get("token", ""),
+                device_id,
+                spo2,
+                hr,
+                temp_c,
+                bp_sys,
+                bp_dia,
+                confidence,
+                vitals_ts,
+                1 if simulated else 0,
+            ),
+        )
+        DB_CONN.commit()
+    _audit("vitals_submit", {"pid": resolved_pid, "token": p.get("token"), "device_id": device_id})
+    await _broadcast_queue_update()
+    return {"ok": True, "pid": resolved_pid, "token": p.get("token"), "ts": vitals_ts}
+
+
+@app.get("/api/vitals/{pid}")
+def api_vitals_pid(request: Request, pid: str):
+    _require_staff(request)
+    v = _latest_vitals_for_pid(pid)
+    return {"ok": True, "vitals": v}
+
+
+@app.post("/api/vitals/simulate")
+async def api_vitals_simulate(request: Request, pid: str = Form("")):
+    _require_staff(request)
+    if not USE_SIMULATED_VITALS:
+        raise HTTPException(400, "Simulated vitals disabled.")
+    resolved_pid = _resolve_code(pid)
+    if not resolved_pid:
+        raise HTTPException(404, "Patient not found.")
+    spo2 = random.randint(96, 100)
+    hr = random.randint(62, 98)
+    temp_c = round(random.uniform(36.4, 37.6), 1)
+    bp_sys = random.randint(108, 132)
+    bp_dia = random.randint(68, 86)
+    return await api_vitals_submit(
+        pid=resolved_pid,
+        token="",
+        device_id="sim-vitals",
+        spo2=float(spo2),
+        hr=float(hr),
+        temp_c=float(temp_c),
+        bp_sys=float(bp_sys),
+        bp_dia=float(bp_dia),
+        confidence=0.89,
+        simulated=1,
+        ts=datetime.utcnow().isoformat(),
+    )
+
+
+@app.post("/api/ai/chat")
+def api_ai_chat(request: Request, pid: str = Form(""), message: str = Form(""), role: str = Form("patient")):
+    text = (message or "").strip()
+    if not text:
+        raise HTTPException(400, "Message is required.")
+    out = _ai_chat_reply(text)
+    resolved_pid = _resolve_code(pid) if pid else None
+    with STATE_LOCK:
+        DB_CONN.execute(
+            "INSERT INTO ai_conversations(pid, role, message, ts) VALUES(?,?,?,?)",
+            (resolved_pid or "", role, text, datetime.utcnow().isoformat()),
+        )
+        DB_CONN.execute(
+            "INSERT INTO ai_conversations(pid, role, message, ts) VALUES(?,?,?,?)",
+            (resolved_pid or "", "assistant", out["reply"], datetime.utcnow().isoformat()),
+        )
+        DB_CONN.commit()
+    return {
+        "ok": True,
+        "provider": AI_PROVIDER,
+        "non_diagnostic": True,
+        "reply": out["reply"],
+        "red_flags": out["red_flags"],
+    }
+
+
+@app.get("/api/lobby-load")
+def api_lobby_load():
+    return _lobby_load_score()
+
+
+if not _SPA_BUILD:
+    @app.get("/display", response_class=HTMLResponse)
+    def display_page():
+        return render("display.html", page="display")
 
 
 @app.get("/api/queue")
@@ -949,13 +1349,14 @@ async def ws_queue(websocket: WebSocket):
             WS_CLIENTS.discard(websocket)
 
 
-@app.get("/staff", response_class=HTMLResponse)
-def staff_page(request: Request):
-    if not _is_staff_authenticated(request):
-        return RedirectResponse("/staff/login", status_code=302)
-    with STATE_LOCK:
-        pc = provider_count
-    return render("staff.html", page="staff", provider_count=pc)
+if not _SPA_BUILD:
+    @app.get("/staff", response_class=HTMLResponse)
+    def staff_page(request: Request):
+        if not _is_staff_authenticated(request):
+            return RedirectResponse("/staff/login", status_code=302)
+        with STATE_LOCK:
+            pc = provider_count
+        return render("staff.html", page="staff", provider_count=pc)
 
 
 @app.get("/api/staff-queue")
@@ -984,7 +1385,10 @@ async def api_staff_status(request: Request, pid: str, status: str = Form(...)):
         patients[pid]["status"] = status
         if status == "done":
             queue_order[:] = [x for x in queue_order if x != pid]
+        DB_CONN.execute("UPDATE patients SET status=? WHERE pid=?", (status, pid))
+        DB_CONN.commit()
     _audit("status_change", {"pid": pid, "status": status})
+    _queue_event("status_change", pid=pid, token=patients.get(pid, {}).get("token", ""), payload={"status": status})
     await _broadcast_queue_update()
     return {"ok": True}
 
@@ -997,22 +1401,23 @@ async def api_provider_count(request: Request, count: int = Form(...)):
         provider_count = min(3, max(1, int(count)))
         pc = provider_count
     _audit("provider_count_change", {"provider_count": pc})
+    _queue_event("provider_count_change", payload={"provider_count": pc})
     await _broadcast_queue_update()
     return {"ok": True, "provider_count": pc}
 
 
-@app.get("/analytics", response_class=HTMLResponse)
-def analytics_page(request: Request):
-    if not _is_staff_authenticated(request):
-        return RedirectResponse("/staff/login", status_code=302)
-    with STATE_LOCK:
-        pc = provider_count
-    return render("analytics.html", page="analytics", provider_count=pc)
+if not _SPA_BUILD:
+    @app.get("/analytics", response_class=HTMLResponse)
+    def analytics_page(request: Request):
+        if not _is_staff_authenticated(request):
+            return RedirectResponse("/staff/login", status_code=302)
+        with STATE_LOCK:
+            pc = provider_count
+        return render("analytics.html", page="analytics", provider_count=pc)
 
-
-@app.get("/privacy", response_class=HTMLResponse)
-def privacy_page():
-    return render("privacy.html", page="privacy")
+    @app.get("/privacy", response_class=HTMLResponse)
+    def privacy_page():
+        return render("privacy.html", page="privacy")
 
 
 @app.get("/api/analytics")
@@ -1051,11 +1456,12 @@ async def demo_reset(request: Request):
     return {"ok": True, "demo_mode": False}
 
 
-@app.get("/staff/login", response_class=HTMLResponse)
-def staff_login_page(request: Request):
-    if _is_staff_authenticated(request):
-        return RedirectResponse("/staff", status_code=302)
-    return render("staff_login.html", page="staff_login", error="")
+if not _SPA_BUILD:
+    @app.get("/staff/login", response_class=HTMLResponse)
+    def staff_login_page(request: Request):
+        if _is_staff_authenticated(request):
+            return RedirectResponse("/staff", status_code=302)
+        return render("staff_login.html", page="staff_login", error="")
 
 
 @app.post("/staff/login", response_class=HTMLResponse)
@@ -1084,6 +1490,37 @@ def staff_login_submit(request: Request, password: str = Form("")):
     return response
 
 
+@app.post("/api/staff/login")
+def api_staff_login(request: Request, body: StaffLoginRequest):
+    """JSON API for React frontend. Sets cookie and returns redirect."""
+    ip = _client_ip(request)
+    now = time.time()
+    with STATE_LOCK:
+        attempts = [ts for ts in LOGIN_ATTEMPTS_BY_IP.get(ip, []) if now - ts < 60]
+        if len(attempts) >= 5:
+            raise HTTPException(429, "Too many attempts. Please wait a minute.")
+        if (body.password or "") != STAFF_ACCESS_PASSWORD:
+            attempts.append(now)
+            LOGIN_ATTEMPTS_BY_IP[ip] = attempts
+            raise HTTPException(401, "Invalid staff password.")
+        LOGIN_ATTEMPTS_BY_IP[ip] = []
+    response = Response(
+        content=json.dumps({"ok": True, "redirect": "/staff"}),
+        media_type="application/json",
+        status_code=200,
+    )
+    response.set_cookie(
+        STAFF_SESSION_COOKIE,
+        _create_staff_session_value(),
+        max_age=STAFF_SESSION_TTL_MINUTES * 60,
+        httponly=True,
+        secure=FORCE_HTTPS,
+        samesite="lax",
+    )
+    _audit("staff_login", {"ip": ip})
+    return response
+
+
 @app.post("/staff/logout")
 def staff_logout():
     response = RedirectResponse("/staff/login", status_code=302)
@@ -1099,6 +1536,21 @@ def api_audit(request: Request):
     return {"count": len(events), "events": events}
 
 
+if _SPA_BUILD:
+    _SPA_INDEX = str(_FRONTEND_DIST / "index.html")
+
+    @app.get("/{path:path}", response_class=HTMLResponse)
+    def spa_serve(request: Request, path: str):
+        if any(path.startswith(p) for p in ("api/", "assets/", "static/", "docs", "openapi", "redoc")) or path in ("healthz", "readyz"):
+            raise HTTPException(404, "Not Found")
+        if any(path.startswith(p) for p in ("camera", "qr-img/")):
+            raise HTTPException(404, "Not Found")
+        if path in ("", "intake", "patient-station", "kiosk-station", "display", "waiting-room-station", "staff", "analytics", "privacy") or path.startswith("staff/") or path.startswith("kiosk-station/") or path.startswith("qr/"):
+            if "text/html" in (request.headers.get("accept") or ""):
+                return FileResponse(_SPA_INDEX, media_type="text/html")
+        raise HTTPException(404, "Not Found")
+
+
 @app.on_event("shutdown")
 def shutdown_camera_manager():
     global camera_manager
@@ -1108,6 +1560,13 @@ def shutdown_camera_manager():
         WS_CLIENTS.clear()
     if manager is not None:
         manager.stop()
+
+
+@app.on_event("startup")
+def startup_init():
+    _init_db()
+    if DEMO_MODE_FLAG:
+        _seed_demo_patients()
 
 
 if __name__ == "__main__":

@@ -7,6 +7,11 @@
   <link rel="stylesheet" href="/static/style.css">
 </head>
 <body>
+  <div class="a11y-bar" role="region" aria-label="Accessibility and language">
+    <button type="button" id="a11y-large" class="btn-a11y" aria-pressed="false">Large text</button>
+    <button type="button" id="a11y-contrast" class="btn-a11y" aria-pressed="false">High contrast</button>
+    <span class="lang-toggle" aria-label="Language"><button type="button" data-lang="en">EN</button><button type="button" data-lang="ar">AR</button></span>
+  </div>
   <header class="topbar">
     <div class="topbar-inner">
       <div class="brand-wrap">
@@ -34,6 +39,7 @@
     <div class="grid two" style="margin-top:1rem;">
       <div class="card">
         <img id="camera-feed" src="/camera/stream" alt="Live camera stream" style="width:100%; border-radius:12px; border:1px solid var(--border);">
+        <p class="microcopy" style="margin-top:.55rem;">For workflow assistance only. This kiosk does not provide medical diagnosis.</p>
       </div>
       <div class="card">
         <h3 class="title">Last Check-in</h3>
@@ -57,6 +63,19 @@
         </form>
       </div>
     </div>
+
+    <div class="card" style="margin-top:1rem;">
+      <h3 class="title">AI Voice Assistant (Operational, Non-diagnostic)</h3>
+      <p class="microcopy">This assistant helps with kiosk steps only. If emergency symptoms, alert staff immediately.</p>
+      <div class="btn-row" style="margin-top:.6rem;">
+        <button id="mic-btn" type="button" class="btn">Start Listening</button>
+        <span id="voice-state" class="status-pill">Idle</span>
+      </div>
+      <div id="assistant-alert" class="card" style="display:none; border-left:4px solid var(--danger); margin-top:.7rem;">
+        <strong>Red-flag phrase detected. Please call staff now.</strong>
+      </div>
+      <div id="transcript" class="table-like" style="margin-top:.7rem;"></div>
+    </div>
   </main>
 
   <script>
@@ -69,6 +88,10 @@
       const manualForm = document.getElementById('manual-form');
       const manualCode = document.getElementById('manual-code');
       const resumeBtn = document.getElementById('resume-btn');
+      const micBtn = document.getElementById('mic-btn');
+      const voiceState = document.getElementById('voice-state');
+      const transcript = document.getElementById('transcript');
+      const assistantAlert = document.getElementById('assistant-alert');
 
       let scanningEnabled = true;
       let submitting = false;
@@ -102,6 +125,34 @@
         messageOut.textContent = 'Checked in \u2705 ' + (data.message || '');
         successCard.style.display = 'block';
         beep();
+      }
+
+      function addBubble(role, text) {
+        const row = document.createElement('div');
+        row.className = 'card';
+        row.innerHTML = '<strong>' + (role === 'assistant' ? 'Assistant' : 'You') + ':</strong> ' + text;
+        transcript.prepend(row);
+      }
+
+      async function sendAssistantMessage(text) {
+        try {
+          const fd = new FormData();
+          fd.append('message', text);
+          fd.append('role', 'patient');
+          const r = await fetch('/api/ai/chat', { method: 'POST', body: fd });
+          const data = await r.json();
+          addBubble('assistant', data.reply || 'Unable to respond.');
+          if (data.red_flags && data.red_flags.length) {
+            assistantAlert.style.display = 'block';
+            beep();
+          }
+          if ('speechSynthesis' in window && data.reply) {
+            const ut = new SpeechSynthesisUtterance(data.reply);
+            window.speechSynthesis.speak(ut);
+          }
+        } catch (e) {
+          addBubble('assistant', 'Assistant unavailable right now.');
+        }
       }
 
       async function submitCode(code, fromCamera) {
@@ -160,9 +211,37 @@
         setStatus('Scanning for QR...');
       });
 
+      const Recognition = window.SpeechRecognition || window.webkitSpeechRecognition;
+      let rec = null;
+      if (Recognition) {
+        rec = new Recognition();
+        rec.lang = 'en-US';
+        rec.interimResults = false;
+        rec.maxAlternatives = 1;
+        rec.onstart = function () { voiceState.textContent = 'Listening'; micBtn.textContent = 'Listening...'; };
+        rec.onend = function () { voiceState.textContent = 'Idle'; micBtn.textContent = 'Start Listening'; };
+        rec.onresult = function (event) {
+          const text = (event.results?.[0]?.[0]?.transcript || '').trim();
+          if (!text) return;
+          addBubble('user', text);
+          voiceState.textContent = 'Processing';
+          sendAssistantMessage(text).finally(function () { voiceState.textContent = 'Speaking'; });
+        };
+      } else {
+        micBtn.disabled = true;
+        micBtn.textContent = 'Voice Not Supported';
+      }
+
+      micBtn.addEventListener('click', function () {
+        if (!rec) return;
+        assistantAlert.style.display = 'none';
+        rec.start();
+      });
+
       setInterval(pollLastScan, 200);
       setStatus('Scanning for QR...');
     })();
   </script>
+  <script src="/static/ux.js"></script>
 </body>
 </html>

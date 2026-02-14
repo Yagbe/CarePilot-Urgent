@@ -1,0 +1,21 @@
+# Render Blueprint - deploy CarePilot as a Web Service
+services:
+  - type: web
+    name: carepilot
+    runtime: docker
+    dockerfilePath: ./Dockerfile
+    envVars:
+      - key: APP_ENV
+        value: production
+      - key: ENABLE_DOCS
+        value: "0"
+      # Set STAFF_ACCESS_PASSWORD in Render dashboard (required; do not use 1234 in production)
+      - key: APP_SECRET_KEY
+        generateValue: true
+      - key: DB_PATH
+        value: /data/carepilot.db
+    # Mount a persistent disk for SQLite (optional; create in Render dashboard)
+    # disk:
+    #   name: carepilot-data
+    #   mountPath: /data
+    healthCheckPath: /healthz

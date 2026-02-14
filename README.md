@@ -20,6 +20,32 @@ uvicorn app:app --reload --host 0.0.0.0 --port 8000
 
 Open: `http://localhost:8000/`
 
+### Best UI/UX track (React + Tailwind + shadcn/ui)
+
+The app includes an optional React frontend that satisfies the **Best UI/UX** stack:
+
+- **Tailwind CSS** – utility-first styling
+- **shadcn/ui** (Radix primitives) – Button, Card, Input, Label
+- **lucide-react** – icons (Stethoscope, User, Monitor, etc.)
+- **Inter** font (with system fallback)
+- **framer-motion** – subtle page/block animations
+
+To use the React UI:
+
+```bash
+cd frontend
+npm install
+npm run build
+cd ..
+uvicorn app:app --reload --host 0.0.0.0 --port 8000
+```
+
+When `frontend/dist/index.html` exists, the server serves the SPA for portal, intake, kiosk, display, staff, analytics, and privacy. The same station URLs apply; APIs are unchanged.
+
+### Deploy to Railway or Render
+
+See **[DEPLOY.md](DEPLOY.md)** for one-click Docker deploy to Railway or Render (builds React frontend, runs FastAPI, optional persistent SQLite volume).
+
 ---
 
 ## 2) Role-Based Access (Hospital Style)
@@ -82,6 +108,11 @@ Key variables:
 - `CAM_W=1280`
 - `CAM_H=720`
 - `CAMERA_PIPELINE=` (optional GStreamer pipeline for Jetson)
+- `DB_PATH=carepilot.db`
+- `DEMO_MODE=0`
+- `USE_SIMULATED_VITALS=1`
+- `AI_PROVIDER=openai`
+- `OPENAI_API_KEY=...` (optional)
 
 ---
 
@@ -95,6 +126,12 @@ Key variables:
 - `GET /camera/stream` -> MJPEG camera stream for camera kiosk
 - `GET /api/camera/last-scan` -> latest QR text + freshness
 - `POST /api/kiosk-checkin` -> shared kiosk check-in API
+- `POST /api/vitals/submit` -> Jetson/device vitals submission
+- `POST /api/vitals/simulate` -> generate demo vitals (staff auth)
+- `GET /api/vitals/{pid}` -> latest vitals for a visit (staff auth)
+- `POST /api/ai/chat` -> non-diagnostic operational assistant reply
+- `GET /api/lobby-load` -> occupancy score (Low/Medium/High)
+- `GET /api/audit` -> in-memory + DB-backed audit events (staff auth)
 - `WS /ws/queue` -> real-time queue updates for display/staff
 
 ---
@@ -146,9 +183,9 @@ Then open a Pull Request into `main`.
 
 ## 8) Important Operational Note
 
-This app currently uses in-memory storage for hackathon speed.
-- Run a **single app instance** in production-like demos.
-- For true multi-instance production, move state to shared storage (DB/cache).
+This app now writes core operational data to SQLite (`DB_PATH`) for persistence in demo environments.
+- Keep a **single app instance** for consistent in-memory websocket + camera coordination.
+- For full scale multi-instance deployments, move to managed Postgres + shared pub/sub.
 
 ### Jetson Nano camera notes
 

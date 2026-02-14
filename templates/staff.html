@@ -7,6 +7,11 @@
   <link rel="stylesheet" href="/static/style.css">
 </head>
 <body>
+  <div class="a11y-bar" role="region" aria-label="Accessibility and language">
+    <button type="button" id="a11y-large" class="btn-a11y" aria-pressed="false">Large text</button>
+    <button type="button" id="a11y-contrast" class="btn-a11y" aria-pressed="false">High contrast</button>
+    <span class="lang-toggle" aria-label="Language"><button type="button" data-lang="en">EN</button><button type="button" data-lang="ar">AR</button></span>
+  </div>
   <header class="topbar">
     <div class="topbar-inner">
       <div class="brand-wrap">
@@ -163,6 +168,7 @@
                   '<button class="btn warn" onclick="setStatus(\'' + esc(i.id) + '\',\'called\')">Call</button>' +
                   '<button class="btn ok" onclick="setStatus(\'' + esc(i.id) + '\',\'in_room\')">In Room</button>' +
                   '<button class="btn secondary" onclick="setStatus(\'' + esc(i.id) + '\',\'done\')">Done</button>' +
+                  '<button class="btn secondary" onclick="simulateVitals(\'' + esc(i.id) + '\')">Sim Vitals</button>' +
                   '<button class="btn" onclick="copyNoteById(\'' + esc(i.id) + '\')">Copy Note</button>' +
                 '</div>' +
               '</div>' +
@@ -179,12 +185,24 @@
                 '<div class="muted">Estimated visit: ' + esc(i.ai_visit_duration) + '-' + (Number(i.ai_visit_duration || 0) + 10) + ' min</div>' +
                 '<div class="muted">Estimated wait: ' + esc(i.estimated_wait_min) + ' min</div>' +
                 '<div class="muted">Readiness tags: ' + resourceTags + '</div>' +
+                '<div class="muted">Vitals: ' + esc(formatVitals(i.vitals_latest)) + '</div>' +
                 '<div class="muted">Suggested resources:</div>' +
                 '<ul class="muted" style="margin:.4rem 0 .2rem 1rem;">' + resourcesBullets + '</ul>' +
               '</div>' +
             '</div>';
           }).join('');
         });
+    }
+
+    function formatVitals(v) {
+      if (!v) return 'pending';
+      return 'SpO2 ' + (v.spo2 ?? '-') + '% • HR ' + (v.hr ?? '-') + ' bpm • Temp ' + (v.temp_c ?? '-') + ' C';
+    }
+
+    function simulateVitals(pid) {
+      const fd = new FormData();
+      fd.append('pid', pid);
+      fetch('/api/vitals/simulate', { method: 'POST', body: fd }).then(loadQueue);
     }
 
     document.getElementById('provider-select').addEventListener('change', function (e) {
@@ -226,5 +244,6 @@
     })();
     setInterval(loadQueue, 2000);
   </script>
+  <script src="/static/ux.js"></script>
 </body>
 </html>
