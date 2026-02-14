@@ -7,9 +7,12 @@ Run:
 """
 
 import io
+import hashlib
+import hmac
 import os
 import random
 import re
+import time
 import uuid
 from datetime import datetime, timedelta
 from pathlib import Path
@@ -34,6 +37,10 @@ HOST = os.getenv("HOST", "0.0.0.0")
 FORCE_HTTPS = os.getenv("FORCE_HTTPS", "0") == "1"
 ENABLE_DOCS = os.getenv("ENABLE_DOCS", "1" if APP_ENV != "production" else "0") == "1"
 TRUSTED_HOSTS = [h.strip() for h in os.getenv("TRUSTED_HOSTS", "*").split(",") if h.strip()] or ["*"]
+APP_SECRET_KEY = os.getenv("APP_SECRET_KEY", "dev-only-change-me")
+STAFF_ACCESS_PASSWORD = os.getenv("STAFF_ACCESS_PASSWORD", "1234")
+STAFF_SESSION_TTL_MINUTES = int(os.getenv("STAFF_SESSION_TTL_MINUTES", "480"))
+STAFF_SESSION_COOKIE = "carepilot_staff_session"
 patients: dict[str, dict[str, Any]] = {}
 queue_order: list[str] = []
 provider_count = 1
@@ -372,11 +379,46 @@ def _wait_for_pid(pid: str) -> int:
     return waits.get(pid, 0)
 
 
+def _session_signature(expires_ts: int) -> str:
+    msg = f"staff:{expires_ts}".encode("utf-8")
+    return hmac.new(APP_SECRET_KEY.encode("utf-8"), msg, hashlib.sha256).hexdigest()
+
+
+def _create_staff_session_value() -> str:
+    expires_ts = int(time.time() + (STAFF_SESSION_TTL_MINUTES * 60))
+    return f"{expires_ts}.{_session_signature(expires_ts)}"
+
+
+def _is_staff_authenticated(request: Request) -> bool:
+    raw = request.cookies.get(STAFF_SESSION_COOKIE, "")
+    if "." not in raw:
+        return False
+    exp_s, sig = raw.split(".", 1)
+    try:
+        expires_ts = int(exp_s)
+    except Exception:
+        return False
+    if expires_ts < int(time.time()):
+        return False
+    expected = _session_signature(expires_ts)
+    return hmac.compare_digest(sig, expected)
+
+
+def _require_staff(request: Request) -> None:
+    if not _is_staff_authenticated(request):
+        raise HTTPException(status_code=401, detail="Staff authentication required.")
+
+
 # -----------------------------------------------------------------------------
 # Routes
 # -----------------------------------------------------------------------------
 @app.get("/", response_class=HTMLResponse)
 def home():
+    return render("home.html", page="home")
+
+
+@app.get("/patient", response_class=HTMLResponse)
+def patient_portal():
     return RedirectResponse("/intake", status_code=302)
 
 
@@ -518,18 +560,22 @@ def api_public_queue():
 
 
 @app.get("/staff", response_class=HTMLResponse)
-def staff_page():
+def staff_page(request: Request):
+    if not _is_staff_authenticated(request):
+        return RedirectResponse("/staff/login", status_code=302)
     return render("staff.html", page="staff", provider_count=provider_count)
 
 
 @app.get("/api/staff-queue")
-def api_staff_queue():
+def api_staff_queue(request: Request):
+    _require_staff(request)
     items = _staff_queue_items()
     return {"provider_count": provider_count, "avg_wait_min": _avg_wait(items), "items": items}
 
 
 @app.post("/api/staff/status/{pid}")
-def api_staff_status(pid: str, status: str = Form(...)):
+def api_staff_status(request: Request, pid: str, status: str = Form(...)):
+    _require_staff(request)
     if pid not in patients:
         raise HTTPException(404, "Patient not found.")
     if status not in {"called", "in_room", "done"}:
@@ -541,19 +587,23 @@ def api_staff_status(pid: str, status: str = Form(...)):
 
 
 @app.post("/api/provider-count")
-def api_provider_count(count: int = Form(...)):
+def api_provider_count(request: Request, count: int = Form(...)):
+    _require_staff(request)
     global provider_count
     provider_count = min(3, max(1, int(count)))
     return {"ok": True, "provider_count": provider_count}
 
 
 @app.get("/analytics", response_class=HTMLResponse)
-def analytics_page():
+def analytics_page(request: Request):
+    if not _is_staff_authenticated(request):
+        return RedirectResponse("/staff/login", status_code=302)
     return render("analytics.html", page="analytics", provider_count=provider_count)
 
 
 @app.get("/api/analytics")
-def api_analytics(providers: Optional[int] = None):
+def api_analytics(request: Request, providers: Optional[int] = None):
+    _require_staff(request)
     providers = min(3, max(1, providers or provider_count))
     forecast = _forecast(providers)
     items = _staff_queue_items()
@@ -567,15 +617,47 @@ def api_analytics(providers: Optional[int] = None):
 
 
 @app.post("/demo/seed")
-def demo_seed():
+def demo_seed(request: Request):
+    _require_staff(request)
     _seed_demo_patients()
-    return RedirectResponse("/staff", status_code=302)
+    return {"ok": True, "demo_mode": True}
 
 
 @app.post("/demo/reset")
-def demo_reset():
+def demo_reset(request: Request):
+    _require_staff(request)
     _reset_state()
-    return RedirectResponse("/staff", status_code=302)
+    return {"ok": True, "demo_mode": False}
+
+
+@app.get("/staff/login", response_class=HTMLResponse)
+def staff_login_page(request: Request):
+    if _is_staff_authenticated(request):
+        return RedirectResponse("/staff", status_code=302)
+    return render("staff_login.html", page="staff_login", error="")
+
+
+@app.post("/staff/login", response_class=HTMLResponse)
+def staff_login_submit(request: Request, password: str = Form("")):
+    if password != STAFF_ACCESS_PASSWORD:
+        return render("staff_login.html", page="staff_login", error="Invalid staff password.")
+    response = RedirectResponse("/staff", status_code=302)
+    response.set_cookie(
+        STAFF_SESSION_COOKIE,
+        _create_staff_session_value(),
+        max_age=STAFF_SESSION_TTL_MINUTES * 60,
+        httponly=True,
+        secure=FORCE_HTTPS,
+        samesite="lax",
+    )
+    return response
+
+
+@app.post("/staff/logout")
+def staff_logout():
+    response = RedirectResponse("/staff/login", status_code=302)
+    response.delete_cookie(STAFF_SESSION_COOKIE)
+    return response
 
 
 if __name__ == "__main__":

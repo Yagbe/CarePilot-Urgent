@@ -1,0 +1,47 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>CarePilot Urgent - Access Portal</title>
+  <link rel="stylesheet" href="/static/style.css">
+</head>
+<body>
+  <header class="topbar">
+    <div class="topbar-inner">
+      <div class="brand-wrap">
+        <div class="brand">CarePilot Urgent</div>
+        {% if demo_mode %}<span class="demo-badge">DEMO MODE</span>{% endif %}
+      </div>
+      <nav class="nav">
+        <a class="active" href="/">Access Portal</a>
+      </nav>
+    </div>
+  </header>
+
+  <main class="container">
+    <div class="card">
+      <h1 class="title">Hospital Access Portal</h1>
+      <p class="muted">Choose your role-specific experience. Each area is isolated for real clinic workflows.</p>
+    </div>
+
+    <div class="grid three" style="margin-top:1rem;">
+      <div class="card">
+        <h2 class="title">Patient Access</h2>
+        <p class="muted">Complete intake and receive your QR/token for check-in.</p>
+        <a class="btn" href="/intake">Open Patient Intake</a>
+      </div>
+      <div class="card">
+        <h2 class="title">Kiosk Station</h2>
+        <p class="muted">Front-desk kiosk mode for token or code check-in only.</p>
+        <a class="btn" href="/kiosk">Open Kiosk</a>
+      </div>
+      <div class="card">
+        <h2 class="title">Staff Workspace</h2>
+        <p class="muted">Secure staff operations, live queue management, and analytics.</p>
+        <a class="btn" href="/staff/login">Staff Sign In</a>
+      </div>
+    </div>
+  </main>
+</body>
+</html>

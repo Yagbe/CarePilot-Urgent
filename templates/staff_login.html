@@ -1,0 +1,41 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>CarePilot Urgent - Staff Login</title>
+  <link rel="stylesheet" href="/static/style.css">
+</head>
+<body>
+  <header class="topbar">
+    <div class="topbar-inner">
+      <div class="brand-wrap">
+        <div class="brand">CarePilot Urgent</div>
+        {% if demo_mode %}<span class="demo-badge">DEMO MODE</span>{% endif %}
+      </div>
+      <nav class="nav">
+        <a href="/">Portal</a>
+        <a class="active" href="/staff/login">Staff Login</a>
+      </nav>
+    </div>
+  </header>
+
+  <main class="container">
+    <div class="card" style="max-width:540px;margin:1rem auto;">
+      <h1 class="title">Staff Sign In</h1>
+      <p class="muted">Protected clinical operations access.</p>
+      {% if error %}
+      <div class="card" style="border-left:4px solid var(--danger); margin-bottom:.7rem;">
+        <strong>{{ error }}</strong>
+      </div>
+      {% endif %}
+      <form method="post" action="/staff/login">
+        <label for="password">Staff password</label>
+        <input id="password" name="password" type="password" autocomplete="current-password" required>
+        <button class="btn ok" type="submit">Sign In</button>
+      </form>
+      <p class="microcopy" style="margin-top:.6rem;">Set environment variable <strong>STAFF_ACCESS_PASSWORD</strong> in production.</p>
+    </div>
+  </main>
+</body>
+</html>

@@ -14,11 +14,12 @@
         {% if demo_mode %}<span class="demo-badge">DEMO MODE</span>{% endif %}
       </div>
       <nav class="nav">
-        <a href="/intake">Intake</a>
-        <a href="/kiosk">Kiosk</a>
-        <a href="/display">Display</a>
+        <a href="/">Portal</a>
         <a href="/staff">Staff</a>
         <a class="active" href="/analytics">Analytics</a>
+        <form method="post" action="/staff/logout" style="display:inline;">
+          <button type="submit" class="btn secondary" style="padding:.35rem .6rem;">Logout</button>
+        </form>
       </nav>
     </div>
   </header>
@@ -100,7 +101,13 @@
       const providers = document.getElementById('providers').value;
       document.getElementById('providers-value').textContent = providers;
       fetch('/api/analytics?providers=' + encodeURIComponent(providers))
-        .then(r => r.json())
+        .then(function (r) {
+          if (r.status === 401) {
+            window.location = '/staff/login';
+            throw new Error('unauthorized');
+          }
+          return r.json();
+        })
         .then(function (data) {
           document.getElementById('k-queue').textContent = data.current_queue;
           document.getElementById('k-wait').textContent = data.current_avg_wait + ' min';

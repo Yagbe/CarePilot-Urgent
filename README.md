@@ -32,6 +32,18 @@ Important env vars:
 - `ENABLE_DOCS=0` to disable docs in production
 - `TRUSTED_HOSTS=yourdomain.com,www.yourdomain.com`
 - `FORCE_HTTPS=1` only when TLS termination is configured
+- `APP_SECRET_KEY=<long random secret>`
+- `STAFF_ACCESS_PASSWORD=<staff login password>`
+- `STAFF_SESSION_TTL_MINUTES=480`
+
+## Role-based hospital access
+
+- `/` -> Access Portal (Patient / Kiosk / Staff)
+- `/intake` and `/qr/{pid}` -> Patient flow
+- `/kiosk` -> Kiosk-only check-in station
+- `/display` -> Public waiting room display (token-only)
+- `/staff/login` -> Staff sign-in
+- `/staff` and `/analytics` -> Staff-only protected pages
 
 ## Health checks
 

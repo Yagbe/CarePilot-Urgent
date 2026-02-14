@@ -14,11 +14,12 @@
         {% if demo_mode %}<span class="demo-badge">DEMO MODE</span>{% endif %}
       </div>
       <nav class="nav">
-        <a href="/intake">Intake</a>
-        <a href="/kiosk">Kiosk</a>
-        <a href="/display">Display</a>
+        <a href="/">Portal</a>
         <a class="active" href="/staff">Staff</a>
         <a href="/analytics">Analytics</a>
+        <form method="post" action="/staff/logout" style="display:inline;">
+          <button type="submit" class="btn secondary" style="padding:.35rem .6rem;">Logout</button>
+        </form>
       </nav>
     </div>
   </header>
@@ -70,7 +71,10 @@
     function setStatus(pid, status) {
       const data = new FormData();
       data.append('status', status);
-      fetch('/api/staff/status/' + encodeURIComponent(pid), { method: 'POST', body: data }).then(loadQueue);
+      fetch('/api/staff/status/' + encodeURIComponent(pid), { method: 'POST', body: data }).then(function (r) {
+        if (r.status === 401) { window.location = '/staff/login'; return; }
+        loadQueue();
+      });
     }
 
     function copyText(text) {
@@ -113,7 +117,13 @@
 
     function loadQueue() {
       fetch('/api/staff-queue')
-        .then(r => r.json())
+        .then(function (r) {
+          if (r.status === 401) {
+            window.location = '/staff/login';
+            throw new Error('unauthorized');
+          }
+          return r.json();
+        })
         .then(function (payload) {
           const items = payload.items || [];
           Object.keys(cacheById).forEach(function (k) { delete cacheById[k]; });
@@ -173,16 +183,25 @@
     document.getElementById('provider-select').addEventListener('change', function (e) {
       const fd = new FormData();
       fd.append('count', e.target.value);
-      fetch('/api/provider-count', { method: 'POST', body: fd }).then(loadQueue);
+      fetch('/api/provider-count', { method: 'POST', body: fd }).then(function (r) {
+        if (r.status === 401) { window.location = '/staff/login'; return; }
+        loadQueue();
+      });
     });
 
     document.getElementById('seed-demo-btn').addEventListener('click', function () {
-      fetch('/demo/seed', { method: 'POST' }).then(loadQueue);
+      fetch('/demo/seed', { method: 'POST' }).then(function (r) {
+        if (r.status === 401) { window.location = '/staff/login'; return; }
+        loadQueue();
+      });
     });
 
     document.getElementById('reset-btn').addEventListener('click', function () {
       if (!confirm('Reset all patients and demo data?')) return;
-      fetch('/demo/reset', { method: 'POST' }).then(loadQueue);
+      fetch('/demo/reset', { method: 'POST' }).then(function (r) {
+        if (r.status === 401) { window.location = '/staff/login'; return; }
+        loadQueue();
+      });
     });
 
     loadQueue();
