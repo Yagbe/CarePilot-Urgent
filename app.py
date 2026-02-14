@@ -326,7 +326,7 @@ def _camera() -> CameraManager:
 def render(name: str, **kwargs: Any) -> str:
     base = {
         "version": APP_VERSION,
-        "nav_items": ["intake", "kiosk", "display", "staff", "analytics"],
+        "nav_items": ["intake", "display", "staff", "analytics"],
         "demo_mode": demo_mode,
     }
     base.update(kwargs)
