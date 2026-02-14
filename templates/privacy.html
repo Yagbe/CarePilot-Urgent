@@ -1,0 +1,35 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>CarePilot Urgent - Privacy</title>
+  <link rel="stylesheet" href="/static/style.css">
+</head>
+<body>
+  <header class="topbar">
+    <div class="topbar-inner">
+      <div class="brand-wrap">
+        <div class="brand">CarePilot Urgent</div>
+        {% if demo_mode %}<span class="demo-badge">DEMO MODE</span>{% endif %}
+      </div>
+      <nav class="nav">
+        <a href="/">Portal</a>
+        <a class="active" href="/privacy">Privacy</a>
+      </nav>
+    </div>
+  </header>
+
+  <main class="container">
+    <div class="card">
+      <h1 class="title">Privacy and Safety Statement</h1>
+      <ul class="muted">
+        <li>CarePilot Urgent provides operational triage workflow support only and does not diagnose.</li>
+        <li>Camera frames are processed in memory for QR detection only and are not recorded to disk.</li>
+        <li>QR values are decoded in memory and used only for check-in token resolution.</li>
+        <li>Public waiting-room screens show token-only queue details with no medical symptoms displayed.</li>
+      </ul>
+    </div>
+  </main>
+</body>
+</html>
