@@ -246,7 +246,8 @@ class CameraManager:
         else:
             cap = cv2.VideoCapture(self.index)
         if not cap.isOpened():
-            raise RuntimeError(f"Unable to open camera ({self.pipeline or self.index}).")
+            hint = " On macOS: grant Camera access to Terminal (or Python) in System Preferences → Privacy & Security → Camera."
+            raise RuntimeError(f"Unable to open camera ({self.pipeline or self.index}).{hint}")
         cap.set(cv2.CAP_PROP_FRAME_WIDTH, self.width)
         cap.set(cv2.CAP_PROP_FRAME_HEIGHT, self.height)
         try:

@@ -190,7 +190,15 @@ To send vitals **from hardware** (SpO2, HR, temp, BP) into the app:
 
 ---
 
-## 10) Jetson Nano (Camera + Sensors)
+## 10) Camera (MacBook for local dev, Jetson for kiosk)
+
+**Using your MacBook camera (local development):**
+
+- Defaults are already set: `CAMERA_INDEX=0`, `CAMERA_PIPELINE` empty. The app will use the built-in webcam.
+- **macOS:** The first time you open the kiosk stream, grant **Camera** access to **Terminal** (or **Python**) in **System Preferences → Privacy & Security → Camera**. If the camera fails to open, the error message will remind you.
+- Open **http://localhost:8000/kiosk-station** and the live view + QR scan use your MacBook camera.
+
+**Jetson Nano (production kiosk):**
 
 - **Camera:** `ls /dev/video*` and `v4l2-ctl --list-devices`. Optional `CAMERA_PIPELINE` for GStreamer (see DEPLOY/README for a low-latency example).
 - **OpenCV on Nano:** `sudo apt-get install python3-opencv` if needed.
