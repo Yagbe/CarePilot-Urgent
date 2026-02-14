@@ -1,0 +1,64 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>CarePilot Urgent - Waiting Room</title>
+  <link rel="stylesheet" href="/static/style.css">
+</head>
+<body>
+  <header class="topbar">
+    <div class="topbar-inner">
+      <div class="brand-wrap">
+        <div class="brand">CarePilot Urgent</div>
+        {% if demo_mode %}<span class="demo-badge">DEMO MODE</span>{% endif %}
+      </div>
+      <nav class="nav">
+        <a href="/intake">Intake</a>
+        <a href="/kiosk">Kiosk</a>
+        <a class="active" href="/display">Display</a>
+        <a href="/staff">Staff</a>
+        <a href="/analytics">Analytics</a>
+      </nav>
+    </div>
+  </header>
+
+  <main class="container">
+    <h1 class="title">Waiting Room Display</h1>
+    <p class="muted">Token-only queue (privacy-safe). Auto-refresh every 2 seconds.</p>
+    <p class="microcopy">This screen contains no medical details.</p>
+    <div id="queue" class="table-like"></div>
+  </main>
+
+  <script>
+    function esc(v) {
+      const d = document.createElement('div');
+      d.textContent = String(v ?? '');
+      return d.innerHTML;
+    }
+    function render(items) {
+      const q = document.getElementById('queue');
+      if (!items || !items.length) {
+        q.innerHTML = '<div class="card muted">No patients currently in queue.</div>';
+        return;
+      }
+      q.innerHTML = items.map(function (i) {
+        return '<div class="patient-row">' +
+          '<div style="display:flex;justify-content:space-between;gap:1rem;align-items:center;">' +
+            '<div><strong>' + esc(i.token) + '</strong><br><span class="muted">Estimated wait: ' + esc(i.estimated_wait_min) + ' min</span></div>' +
+            '<span class="status-pill">' + esc(i.status_label) + '</span>' +
+          '</div>' +
+        '</div>';
+      }).join('');
+    }
+    function poll() {
+      fetch('/api/queue')
+        .then(function (r) { return r.json(); })
+        .then(render)
+        .catch(function () { render([]); });
+    }
+    poll();
+    setInterval(poll, 2000);
+  </script>
+</body>
+</html>

@@ -1,0 +1,139 @@
+:root {
+  --bg: #f3f6fb;
+  --card: #ffffff;
+  --text: #0f172a;
+  --muted: #64748b;
+  --primary: #0ea5e9;
+  --border: #dbe3ef;
+  --ok: #10b981;
+  --warn: #f59e0b;
+  --danger: #ef4444;
+}
+* { box-sizing: border-box; }
+body {
+  margin: 0;
+  font-family: Inter, system-ui, -apple-system, Segoe UI, Roboto, sans-serif;
+  color: var(--text);
+  background: linear-gradient(180deg, #eef4ff 0%, var(--bg) 100%);
+}
+.topbar {
+  position: sticky;
+  top: 0;
+  z-index: 20;
+  background: #0b1220;
+  color: #fff;
+  border-bottom: 1px solid #1e2a41;
+}
+.topbar-inner {
+  max-width: 1100px;
+  margin: 0 auto;
+  padding: 0.8rem 1rem;
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 1rem;
+}
+.brand { font-weight: 700; letter-spacing: .2px; }
+.demo-badge {
+  margin-left: .5rem;
+  background: #7c3aed;
+  color: #fff;
+  border-radius: 999px;
+  padding: .18rem .55rem;
+  font-size: .75rem;
+  font-weight: 700;
+}
+.nav { display: flex; gap: .6rem; flex-wrap: wrap; }
+.nav a {
+  color: #d5deef;
+  text-decoration: none;
+  padding: .4rem .65rem;
+  border-radius: 8px;
+  font-size: .92rem;
+}
+.nav a.active, .nav a:hover { background: #1d2b47; color: #fff; }
+.container { max-width: 1100px; margin: 1.25rem auto; padding: 0 1rem 2rem; }
+.grid { display: grid; gap: 1rem; }
+.grid.two { grid-template-columns: repeat(auto-fit, minmax(260px, 1fr)); }
+.grid.three { grid-template-columns: repeat(auto-fit, minmax(220px, 1fr)); }
+.card {
+  background: var(--card);
+  border: 1px solid var(--border);
+  border-radius: 14px;
+  padding: 1rem;
+  box-shadow: 0 2px 10px rgba(15, 23, 42, 0.05);
+}
+.title { margin: 0 0 .35rem; font-size: 1.3rem; }
+.muted { color: var(--muted); font-size: .95rem; }
+.kpi { font-size: 1.7rem; font-weight: 700; margin-top: .2rem; }
+label { font-size: .9rem; color: #334155; display: block; margin-bottom: .35rem; }
+input, textarea, select {
+  width: 100%;
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  padding: .68rem .75rem;
+  font-size: 1rem;
+  margin-bottom: .8rem;
+  background: #fff;
+}
+textarea { min-height: 110px; resize: vertical; }
+.btn {
+  border: 0;
+  background: var(--primary);
+  color: #fff;
+  border-radius: 10px;
+  padding: .65rem .9rem;
+  font-weight: 600;
+  cursor: pointer;
+}
+.btn.secondary { background: #334155; }
+.btn.warn { background: var(--warn); }
+.btn.ok { background: var(--ok); }
+.btn.danger { background: var(--danger); }
+.btn-row { display: flex; gap: .5rem; flex-wrap: wrap; }
+.status-pill {
+  display: inline-block;
+  border-radius: 999px;
+  padding: .18rem .62rem;
+  font-size: .8rem;
+  font-weight: 600;
+  background: #e2e8f0;
+  color: #334155;
+}
+.status-waiting { background: #e0f2fe; color: #0369a1; }
+.status-called { background: #fef3c7; color: #92400e; }
+.status-in_room { background: #dcfce7; color: #166534; }
+.status-done { background: #e2e8f0; color: #334155; }
+.flag-badge {
+  display: inline-block;
+  border-radius: 999px;
+  padding: .2rem .55rem;
+  font-size: .78rem;
+  font-weight: 700;
+  background: #fee2e2;
+  color: #991b1b;
+}
+.microcopy {
+  font-size: .85rem;
+  color: #64748b;
+}
+.brand-wrap {
+  display: flex;
+  align-items: center;
+  gap: .45rem;
+}
+.wizard-steps { display: flex; gap: .5rem; margin-bottom: 1rem; flex-wrap: wrap; }
+.step {
+  border: 1px solid var(--border);
+  background: #fff;
+  border-radius: 999px;
+  padding: .35rem .65rem;
+  font-size: .85rem;
+}
+.step.active { border-color: var(--primary); color: #0c4a6e; background: #e0f2fe; }
+.kiosk-input { font-size: 2rem; letter-spacing: .18em; text-align: center; padding: 1rem; }
+.token-card { font-size: 1.7rem; font-weight: 800; letter-spacing: .06em; text-align: center; }
+.table-like { display: grid; gap: .8rem; }
+.patient-row { border: 1px solid var(--border); border-radius: 12px; padding: .9rem; background: #fff; }
+.hr { border: 0; border-top: 1px solid var(--border); margin: .9rem 0; }
+canvas { width: 100%; max-width: 100%; background: #fff; border-radius: 10px; border: 1px solid var(--border); }

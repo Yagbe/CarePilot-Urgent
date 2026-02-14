@@ -1,0 +1,146 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>CarePilot Urgent - Intake</title>
+  <link rel="stylesheet" href="/static/style.css">
+</head>
+<body>
+  <header class="topbar">
+    <div class="topbar-inner">
+      <div class="brand-wrap">
+        <div class="brand">CarePilot Urgent</div>
+        {% if demo_mode %}<span class="demo-badge">DEMO MODE</span>{% endif %}
+      </div>
+      <nav class="nav">
+        <a class="active" href="/intake">Intake</a>
+        <a href="/kiosk">Kiosk</a>
+        <a href="/display">Display</a>
+        <a href="/staff">Staff</a>
+        <a href="/analytics">Analytics</a>
+      </nav>
+    </div>
+  </header>
+
+  <main class="container">
+    <h1 class="title">Urgent Care Intake</h1>
+    <p class="muted">Most check-ins take under 30 seconds.</p>
+
+    <div class="card" style="border-left:4px solid var(--warn);">
+      <strong>Urgent care only:</strong> If this is a life-threatening emergency, call 911 or go to the nearest ER.
+    </div>
+
+    <div class="card">
+      <div class="wizard-steps">
+        <span class="step active" id="s1">Step 1 of 3: Info</span>
+        <span class="step" id="s2">Step 2 of 3: Symptoms</span>
+        <span class="step" id="s3">Step 3 of 3: Confirm</span>
+      </div>
+
+      <form method="post" action="/intake" id="intake-form">
+        <section data-step="1">
+          <label for="first_name">First name *</label>
+          <input id="first_name" name="first_name" type="text" required>
+
+          <label for="last_name">Last name</label>
+          <input id="last_name" name="last_name" type="text">
+
+          <label for="phone">Phone</label>
+          <input id="phone" name="phone" type="tel" placeholder="Optional">
+
+          <label for="dob">Date of birth</label>
+          <input id="dob" name="dob" type="date">
+          <p class="microcopy" style="margin-top:-.35rem;">Use format YYYY-MM-DD. Future dates are not allowed.</p>
+        </section>
+
+        <section data-step="2" style="display:none;">
+          <label for="symptoms">Symptoms *</label>
+          <textarea id="symptoms" name="symptoms" required placeholder="Describe symptoms in plain language..."></textarea>
+
+          <label for="duration_text">Symptom duration</label>
+          <input id="duration_text" name="duration_text" type="text" placeholder="e.g. 2 days">
+
+          <label for="arrival_window">When are you likely to arrive?</label>
+          <select id="arrival_window" name="arrival_window">
+            <option value="now">Now</option>
+            <option value="soon">In 1-2 hours</option>
+            <option value="later">Later today</option>
+          </select>
+        </section>
+
+        <section data-step="3" style="display:none;">
+          <p class="muted">Confirm and submit to generate your token and QR check-in code.</p>
+          <ul class="muted">
+            <li>Privacy-safe public display uses token only.</li>
+            <li>AI intake summary is operational, non-diagnostic.</li>
+          </ul>
+        </section>
+
+        <div class="btn-row">
+          <button type="button" class="btn secondary" id="prev-btn" style="display:none;">Back</button>
+          <button type="button" class="btn" id="next-btn">Next</button>
+          <button type="submit" class="btn ok" id="submit-btn" style="display:none;">Submit Intake</button>
+        </div>
+      </form>
+    </div>
+  </main>
+
+  <script>
+    (function () {
+      let step = 1;
+      const steps = Array.from(document.querySelectorAll('[data-step]'));
+      const s1 = document.getElementById('s1');
+      const s2 = document.getElementById('s2');
+      const s3 = document.getElementById('s3');
+      const prevBtn = document.getElementById('prev-btn');
+      const nextBtn = document.getElementById('next-btn');
+      const submitBtn = document.getElementById('submit-btn');
+      const firstName = document.getElementById('first_name');
+      const symptoms = document.getElementById('symptoms');
+      const dob = document.getElementById('dob');
+
+      function render() {
+        steps.forEach(function (el) {
+          el.style.display = Number(el.dataset.step) === step ? '' : 'none';
+        });
+        [s1, s2, s3].forEach(function (el, i) {
+          el.classList.toggle('active', i + 1 === step);
+        });
+        prevBtn.style.display = step > 1 ? '' : 'none';
+        nextBtn.style.display = step < 3 ? '' : 'none';
+        submitBtn.style.display = step === 3 ? '' : 'none';
+      }
+
+      nextBtn.addEventListener('click', function () {
+        if (step === 1 && !firstName.value.trim()) {
+          alert('First name is required.');
+          return;
+        }
+        if (step === 2 && !symptoms.value.trim()) {
+          alert('Symptoms are required.');
+          return;
+        }
+        step = Math.min(3, step + 1);
+        render();
+      });
+      prevBtn.addEventListener('click', function () {
+        step = Math.max(1, step - 1);
+        render();
+      });
+      document.getElementById('intake-form').addEventListener('submit', function (e) {
+        if (dob.value) {
+          const d = new Date(dob.value + 'T00:00:00');
+          const now = new Date();
+          now.setHours(0, 0, 0, 0);
+          if (d > now) {
+            e.preventDefault();
+            alert('DOB cannot be in the future.');
+          }
+        }
+      });
+      render();
+    })();
+  </script>
+</body>
+</html>

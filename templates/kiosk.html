@@ -1,0 +1,52 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>CarePilot Urgent - Kiosk</title>
+  <link rel="stylesheet" href="/static/style.css">
+</head>
+<body>
+  <header class="topbar">
+    <div class="topbar-inner">
+      <div class="brand-wrap">
+        <div class="brand">CarePilot Urgent</div>
+        {% if demo_mode %}<span class="demo-badge">DEMO MODE</span>{% endif %}
+      </div>
+      <nav class="nav">
+        <a href="/intake">Intake</a>
+        <a class="active" href="/kiosk">Kiosk</a>
+        <a href="/display">Display</a>
+        <a href="/staff">Staff</a>
+        <a href="/analytics">Analytics</a>
+      </nav>
+    </div>
+  </header>
+
+  <main class="container">
+    <div class="card" style="max-width:720px; margin:0 auto;">
+      <h1 class="title">Kiosk Check-in</h1>
+      <p class="muted">Enter your check-in code or token. This station is privacy-safe.</p>
+      <p class="microcopy">Most check-ins take under 30 seconds.</p>
+
+      {% if checked_in %}
+      <div class="card" style="border-left:4px solid var(--ok);">
+        <strong>{{ message }}</strong><br>
+        Token: <strong>{{ token }}</strong><br>
+        Estimated wait: <strong>{{ estimated_wait_min }} min</strong>
+      </div>
+      {% elif message %}
+      <div class="card" style="border-left:4px solid var(--danger);">
+        <strong>{{ message }}</strong>
+      </div>
+      {% endif %}
+
+      <form method="post" action="/kiosk">
+        <label for="code">Code or token</label>
+        <input id="code" name="code" class="kiosk-input" placeholder="UC-104 or A1B2C3D4" autofocus required>
+        <button type="submit" class="btn ok" style="font-size:1.2rem;padding:1rem 1.2rem;">Confirm Check-in</button>
+      </form>
+    </div>
+  </main>
+</body>
+</html>

@@ -1,0 +1,192 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>CarePilot Urgent - Staff</title>
+  <link rel="stylesheet" href="/static/style.css">
+</head>
+<body>
+  <header class="topbar">
+    <div class="topbar-inner">
+      <div class="brand-wrap">
+        <div class="brand">CarePilot Urgent</div>
+        {% if demo_mode %}<span class="demo-badge">DEMO MODE</span>{% endif %}
+      </div>
+      <nav class="nav">
+        <a href="/intake">Intake</a>
+        <a href="/kiosk">Kiosk</a>
+        <a href="/display">Display</a>
+        <a class="active" href="/staff">Staff</a>
+        <a href="/analytics">Analytics</a>
+      </nav>
+    </div>
+  </header>
+
+  <main class="container">
+    <div class="grid three">
+      <div class="card">
+        <div class="muted">Providers Available</div>
+        <div class="kpi" id="provider-kpi">{{ provider_count }}</div>
+        <label for="provider-select">Provider count</label>
+        <select id="provider-select">
+          <option value="1">1</option>
+          <option value="2">2</option>
+          <option value="3">3</option>
+        </select>
+      </div>
+      <div class="card">
+        <div class="muted">Current Queue</div>
+        <div class="kpi" id="queue-kpi">0</div>
+      </div>
+      <div class="card">
+        <div class="muted">Average Wait</div>
+        <div class="kpi" id="avg-wait-kpi">0 min</div>
+      </div>
+    </div>
+
+    <div class="card">
+      <div class="btn-row">
+        <button class="btn secondary" type="button" id="seed-demo-btn">Seed demo patients</button>
+        <button class="btn danger" type="button" id="reset-btn">Reset</button>
+      </div>
+    </div>
+
+    <h2 class="title">Live Staff Queue</h2>
+    <div id="staff-queue" class="table-like"></div>
+  </main>
+
+  <script>
+    function esc(v) { const d = document.createElement('div'); d.textContent = String(v ?? ''); return d.innerHTML; }
+    const cacheById = {};
+
+    function statusClass(s) {
+      if (s === 'waiting') return 'status-waiting';
+      if (s === 'called') return 'status-called';
+      if (s === 'in_room') return 'status-in_room';
+      return 'status-done';
+    }
+
+    function setStatus(pid, status) {
+      const data = new FormData();
+      data.append('status', status);
+      fetch('/api/staff/status/' + encodeURIComponent(pid), { method: 'POST', body: data }).then(loadQueue);
+    }
+
+    function copyText(text) {
+      if (navigator.clipboard && navigator.clipboard.writeText) {
+        return navigator.clipboard.writeText(text);
+      }
+      return new Promise(function (resolve, reject) {
+        try {
+          const t = document.createElement('textarea');
+          t.value = text;
+          document.body.appendChild(t);
+          t.select();
+          document.execCommand('copy');
+          document.body.removeChild(t);
+          resolve();
+        } catch (err) {
+          reject(err);
+        }
+      });
+    }
+
+    function copyNoteById(id) {
+      const item = cacheById[id];
+      if (!item) return;
+      const flags = (item.red_flags || []).length ? item.red_flags.join(', ') : 'none';
+      const note =
+        'Token: ' + item.token + '\n' +
+        'Name: ' + (item.full_name || '-') + '\n' +
+        'Chief complaint: ' + (item.chief_complaint || '-') + '\n' +
+        'Symptoms: ' + ((item.symptom_list || []).join(', ') || '-') + '\n' +
+        'Duration: ' + (item.duration_text || '-') + '\n' +
+        'Cluster: ' + (item.ai_cluster || '-') + '\n' +
+        'Red flags: ' + flags + '\n' +
+        'Operational complexity: ' + (item.ai_complexity || '-') + '\n' +
+        'Est visit: ' + (item.ai_visit_duration || 0) + '-' + ((item.ai_visit_duration || 0) + 10) + ' min\n' +
+        'Est wait: ' + (item.estimated_wait_min || 0) + ' min\n' +
+        'Suggested resources: ' + ((item.suggested_resources || []).join(', ') || '-');
+      copyText(note).then(function () { alert('Handoff note copied.'); });
+    }
+
+    function loadQueue() {
+      fetch('/api/staff-queue')
+        .then(r => r.json())
+        .then(function (payload) {
+          const items = payload.items || [];
+          Object.keys(cacheById).forEach(function (k) { delete cacheById[k]; });
+          items.forEach(function (i) { cacheById[i.id] = i; });
+
+          document.getElementById('provider-kpi').textContent = payload.provider_count;
+          document.getElementById('provider-select').value = String(payload.provider_count);
+          document.getElementById('queue-kpi').textContent = items.length;
+          document.getElementById('avg-wait-kpi').textContent = payload.avg_wait_min + ' min';
+          const root = document.getElementById('staff-queue');
+          if (!items.length) {
+            root.innerHTML = '<div class="card muted">No patients in queue.</div>';
+            return;
+          }
+
+          root.innerHTML = items.map(function (i) {
+            const symptoms = esc(i.symptoms || '');
+            const symptomBullets = (i.symptom_list || []).map(function (s) { return '<li>' + esc(s) + '</li>'; }).join('');
+            const flags = (i.red_flags || []);
+            const flagsHtml = flags.length ? '<span class="flag-badge">' + esc(flags.join(', ')) + '</span>' : '<span class="muted">none detected</span>';
+            const resourcesBullets = (i.suggested_resources || []).map(function (s) { return '<li>' + esc(s) + '</li>'; }).join('');
+
+            return '<div class="patient-row">' +
+              '<div style="display:flex;justify-content:space-between;gap:1rem;align-items:flex-start;">' +
+                '<div>' +
+                  '<strong>' + esc(i.token) + '</strong> <span class="muted">- ' + esc(i.full_name) + '</span><br>' +
+                  '<span class="status-pill ' + statusClass(i.status) + '">' + esc(i.status_label) + '</span> ' +
+                  '<span class="muted">Est wait ' + esc(i.estimated_wait_min) + ' min</span>' +
+                '</div>' +
+                '<div class="btn-row">' +
+                  '<button class="btn warn" onclick="setStatus(\'' + esc(i.id) + '\',\'called\')">Call</button>' +
+                  '<button class="btn ok" onclick="setStatus(\'' + esc(i.id) + '\',\'in_room\')">In Room</button>' +
+                  '<button class="btn secondary" onclick="setStatus(\'' + esc(i.id) + '\',\'done\')">Done</button>' +
+                  '<button class="btn" onclick="copyNoteById(\'' + esc(i.id) + '\')">Copy Note</button>' +
+                '</div>' +
+              '</div>' +
+              '<hr class="hr">' +
+              '<div><strong>Chief complaint:</strong> ' + esc(i.chief_complaint || '-') + '</div>' +
+              '<div><strong>Symptoms:</strong> ' + symptoms + '</div>' +
+              '<ul class="muted" style="margin:.4rem 0 .4rem 1rem;">' + symptomBullets + '</ul>' +
+              '<div class="muted"><strong>Duration:</strong> ' + esc(i.duration_text || '-') + '</div>' +
+              '<div class="muted"><strong>Red flags:</strong> ' + flagsHtml + '</div>' +
+              '<div class="card" style="margin-top:.6rem;">' +
+                '<strong>AI Structured Intake (Operational, non-diagnostic)</strong><br>' +
+                '<div class="muted">Cluster: ' + esc(i.ai_cluster) + '</div>' +
+                '<div class="muted">Complexity: ' + esc(i.ai_complexity) + '</div>' +
+                '<div class="muted">Estimated visit: ' + esc(i.ai_visit_duration) + '-' + (Number(i.ai_visit_duration || 0) + 10) + ' min</div>' +
+                '<div class="muted">Estimated wait: ' + esc(i.estimated_wait_min) + ' min</div>' +
+                '<div class="muted">Suggested resources:</div>' +
+                '<ul class="muted" style="margin:.4rem 0 .2rem 1rem;">' + resourcesBullets + '</ul>' +
+              '</div>' +
+            '</div>';
+          }).join('');
+        });
+    }
+
+    document.getElementById('provider-select').addEventListener('change', function (e) {
+      const fd = new FormData();
+      fd.append('count', e.target.value);
+      fetch('/api/provider-count', { method: 'POST', body: fd }).then(loadQueue);
+    });
+
+    document.getElementById('seed-demo-btn').addEventListener('click', function () {
+      fetch('/demo/seed', { method: 'POST' }).then(loadQueue);
+    });
+
+    document.getElementById('reset-btn').addEventListener('click', function () {
+      if (!confirm('Reset all patients and demo data?')) return;
+      fetch('/demo/reset', { method: 'POST' }).then(loadQueue);
+    });
+
+    loadQueue();
+    setInterval(loadQueue, 2000);
+  </script>
+</body>
+</html>

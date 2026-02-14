@@ -1,0 +1,43 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>CarePilot Urgent - QR</title>
+  <link rel="stylesheet" href="/static/style.css">
+</head>
+<body>
+  <header class="topbar">
+    <div class="topbar-inner">
+      <div class="brand-wrap">
+        <div class="brand">CarePilot Urgent</div>
+        {% if demo_mode %}<span class="demo-badge">DEMO MODE</span>{% endif %}
+      </div>
+      <nav class="nav">
+        <a href="/intake">Intake</a>
+        <a class="active" href="/kiosk">Kiosk</a>
+        <a href="/display">Display</a>
+        <a href="/staff">Staff</a>
+        <a href="/analytics">Analytics</a>
+      </nav>
+    </div>
+  </header>
+
+  <main class="container">
+    <div class="grid two">
+      <div class="card">
+        <h2 class="title">Your Check-in Details</h2>
+        <p class="muted">{{ display_name }}</p>
+        <div class="token-card">{{ token }}</div>
+        <p class="muted">You can check in with token <strong>{{ token }}</strong> or code <strong>{{ pid }}</strong>.</p>
+      </div>
+      <div class="card" style="text-align:center;">
+        <h3 class="title">QR Check-in</h3>
+        <img src="/qr-img/{{ pid }}" alt="QR code" width="220" height="220" style="border:1px solid var(--border); border-radius:10px; padding:.4rem;">
+        <p class="muted" style="margin-top:.7rem;">Scan at kiosk or type code: <strong>{{ pid }}</strong></p>
+        <p class="microcopy">If QR scanning fails, enter token <strong>{{ token }}</strong> at kiosk.</p>
+      </div>
+    </div>
+  </main>
+</body>
+</html>

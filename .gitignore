@@ -1,0 +1,9 @@
+.venv/
+__pycache__/
+.pycache/
+*.pyc
+*.pyo
+*.pyd
+.DS_Store
+.cursor/
+kiosk_debug.log
