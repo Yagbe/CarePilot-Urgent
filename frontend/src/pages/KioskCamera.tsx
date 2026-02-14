@@ -46,6 +46,7 @@ export function KioskCamera() {
   const [transcript, setTranscript] = useState<TranscriptBubble[]>([]);
   const [redFlagAlert, setRedFlagAlert] = useState(false);
   const recognitionRef = useRef<{ start: () => void; abort: () => void } | null>(null);
+  const announcedWaitRef = useRef(false);
 
   const submitCode = useCallback(async (code: string, fromCamera: boolean) => {
     if (!code.trim()) return;
@@ -169,141 +170,125 @@ export function KioskCamera() {
     recognitionRef.current?.start();
   };
 
+  // When patient is checked in, announce wait time once and that they can ask questions
+  useEffect(() => {
+    if (!successCard || announcedWaitRef.current) return;
+    announcedWaitRef.current = true;
+    const mins = successCard.estimated_wait_min;
+    const waitText = mins <= 0 ? "a short time" : `${mins} minute${mins !== 1 ? "s" : ""}`;
+    const msg = `You're checked in. Your estimated wait is ${waitText}. If you have any questions, ask me now.`;
+    if ("speechSynthesis" in window) {
+      const u = new SpeechSynthesisUtterance(msg);
+      window.speechSynthesis.speak(u);
+    }
+  }, [successCard]);
+
+  const handleNextPatient = () => {
+    setSuccessCard(null);
+    setScanningEnabled(true);
+    setStatus("Scanning for QR…");
+    setTranscript([]);
+    setRedFlagAlert(false);
+    announcedWaitRef.current = false;
+  };
+
   return (
     <>
       <Topbar />
-      <main className="mx-auto max-w-4xl space-y-6 px-4 py-6">
-        <Card>
-          <CardHeader>
-            <CardTitle>Kiosk Check-in</CardTitle>
-            <CardContent className="pt-0">
-              <p className="text-muted-foreground text-sm">
-                Scan the patient's QR code with the camera, or enter their token/code below.
-              </p>
-              <div className="mt-3 rounded-lg border-l-4 border-primary bg-muted/30 p-3">
-                <strong>{status}</strong>
-              </div>
-            </CardContent>
-          </CardHeader>
-        </Card>
-
-        <div className="grid gap-4 sm:grid-cols-2">
-          <Card>
-            <CardContent className="p-0">
-              <img
-                src="/camera/stream"
-                alt="Live camera stream"
-                className="h-auto w-full rounded-lg border border-border"
-              />
-            </CardContent>
-            <p className="mt-2 text-muted-foreground text-xs">For workflow assistance only. This kiosk does not provide medical diagnosis.</p>
-          </Card>
-          <Card>
-            <CardHeader>
-              <CardTitle>Enter token or code</CardTitle>
-              <CardContent className="space-y-2 pt-0">
-                {successCard ? (
-                  <motion.div
-                    initial={{ opacity: 0, height: 0 }}
-                    animate={{ opacity: 1, height: "auto" }}
-                    className="space-y-3 rounded-lg border-l-4 border-green-600 bg-green-50 p-4 dark:bg-green-950"
-                  >
-                    <p className="text-xl font-bold text-green-900 dark:text-green-100">✓ You're checked in</p>
-                    {successCard.display_name && (
-                      <p className="text-lg text-green-800 dark:text-green-200">
-                        Welcome, <strong>{successCard.display_name}</strong>.
-                      </p>
-                    )}
-                    <p className="text-green-800 dark:text-green-200">{successCard.message}</p>
-                    <p className="font-mono text-2xl font-bold text-green-800 dark:text-green-200">{successCard.token}</p>
-                    <p className="text-green-800 dark:text-green-200">
-                      Estimated wait: <strong>{successCard.estimated_wait_min} min</strong>
-                    </p>
-                    <p className="text-sm text-green-700 dark:text-green-300 border-t border-green-300 dark:border-green-700 pt-2 mt-2">
-                      Watch the waiting room screen for your token to be called.
-                    </p>
-                    <Button
-                      type="button"
-                      variant="secondary"
-                      size="sm"
-                      className="mt-2"
-                      onClick={() => {
-                        setSuccessCard(null);
-                        setScanningEnabled(true);
-                        setStatus("Scanning for QR…");
-                      }}
-                    >
-                      Next patient
-                    </Button>
-                  </motion.div>
-                ) : (
-                  <>
-                    <form
-                      className="space-y-2"
-                      onSubmit={(e) => {
-                        e.preventDefault();
-                        submitCode(manualCode, false);
-                      }}
-                    >
-                      <Label htmlFor="manual-code">Token or code</Label>
-                      <Input
-                        id="manual-code"
-                        value={manualCode}
-                        onChange={(e) => setManualCode(e.target.value)}
-                        placeholder="UC-1234 or A1B2C3D4"
-                        className="font-mono text-lg"
-                      />
-                      <Button type="submit" disabled={submitting} className="w-full">
-                        {submitting ? "Checking in…" : "Check In"}
-                      </Button>
-                    </form>
-                  </>
-                )}
-              </CardContent>
-            </CardHeader>
-          </Card>
+      <main className="mx-auto max-w-4xl space-y-4 px-4 py-4">
+        {/* Small top bar: code entry + status */}
+        <div className="flex flex-wrap items-center gap-3 rounded-lg border border-border bg-muted/30 px-4 py-3">
+          <form
+            className="flex flex-1 min-w-0 items-center gap-2 sm:flex-initial"
+            onSubmit={(e) => {
+              e.preventDefault();
+              submitCode(manualCode, false);
+            }}
+          >
+            <Label htmlFor="manual-code" className="sr-only">Token or code</Label>
+            <Input
+              id="manual-code"
+              value={manualCode}
+              onChange={(e) => setManualCode(e.target.value)}
+              placeholder="UC-1234 or code"
+              className="max-w-[200px] font-mono"
+            />
+            <Button type="submit" disabled={submitting} size="sm">
+              {submitting ? "…" : "Check In"}
+            </Button>
+          </form>
+          <span className="text-sm text-muted-foreground">{status}</span>
         </div>
 
-        {successCard && (
-          <div className="mt-4">
-            <VitalsForm token={successCard.token} />
-          </div>
-        )}
-
+        {/* Largest: QR camera */}
         <Card>
-          <CardHeader>
-            <CardTitle className="text-base">AI Voice Assistant (Operational, Non-diagnostic)</CardTitle>
-            <CardContent className="pt-0">
-              <p className="text-muted-foreground text-xs">
-                This assistant helps with kiosk steps only. If emergency symptoms, alert staff immediately.
-              </p>
-              <div className="mt-3 flex flex-wrap items-center gap-2">
-                <Button type="button" onClick={startListening} disabled={voiceState === "listening"}>
-                  <Mic className="mr-2 h-4 w-4" />
-                  {voiceState === "listening" ? "Listening…" : "Start Listening"}
-                </Button>
-                <span className="rounded-full bg-muted px-2 py-1 text-xs font-medium">
-                  {voiceState === "idle" && "Idle"}
-                  {voiceState === "listening" && "Listening"}
-                  {voiceState === "processing" && "Processing"}
-                  {voiceState === "speaking" && "Speaking"}
-                </span>
-              </div>
-              {redFlagAlert && (
-                <div className="mt-3 rounded-lg border-l-4 border-destructive bg-destructive/10 p-3 text-destructive font-medium">
-                  Red-flag phrase detected. Please call staff now.
-                </div>
-              )}
-              <div className="mt-3 space-y-2">
-                {transcript.map((b, i) => (
-                  <div key={i} className="rounded-lg border border-border bg-muted/30 p-2 text-sm">
-                    <strong>{b.role === "assistant" ? "Assistant" : "You"}:</strong> {b.text}
-                  </div>
-                ))}
-              </div>
-            </CardContent>
-          </CardHeader>
+          <CardContent className="p-0">
+            <img
+              src="/camera/stream"
+              alt="Point QR code at camera"
+              className="h-auto w-full rounded-lg border-0 border-border object-contain max-h-[50vh] sm:max-h-[60vh]"
+            />
+          </CardContent>
+          <p className="px-4 pb-2 text-center text-muted-foreground text-xs">Scan your QR code or enter your token above.</p>
         </Card>
+
+        {/* Only after check-in: success summary + voice assistant */}
+        {successCard && (
+          <motion.div
+            initial={{ opacity: 0 }}
+            animate={{ opacity: 1 }}
+            className="space-y-4"
+          >
+            <div className="rounded-lg border-l-4 border-green-600 bg-green-50 p-4 dark:bg-green-950">
+              <p className="text-lg font-bold text-green-900 dark:text-green-100">✓ You're checked in</p>
+              {successCard.display_name && (
+                <p className="text-green-800 dark:text-green-200">Welcome, <strong>{successCard.display_name}</strong>.</p>
+              )}
+              <p className="font-mono text-xl font-bold text-green-800 dark:text-green-200">{successCard.token}</p>
+              <p className="text-green-800 dark:text-green-200">Estimated wait: <strong>{successCard.estimated_wait_min} min</strong>. Watch the waiting room screen for your token.</p>
+              <Button type="button" variant="secondary" size="sm" className="mt-2" onClick={handleNextPatient}>
+                Next patient
+              </Button>
+            </div>
+
+            <VitalsForm token={successCard.token} />
+
+            <Card>
+              <CardHeader>
+                <CardTitle className="text-base">Voice assistant — your wait time & questions</CardTitle>
+                <CardContent className="pt-0">
+                  <p className="text-muted-foreground text-xs">
+                    Ask about your wait time or anything else. If emergency symptoms, alert staff immediately.
+                  </p>
+                  <div className="mt-3 flex flex-wrap items-center gap-2">
+                    <Button type="button" onClick={startListening} disabled={voiceState === "listening"}>
+                      <Mic className="mr-2 h-4 w-4" />
+                      {voiceState === "listening" ? "Listening…" : "Ask a question"}
+                    </Button>
+                    <span className="rounded-full bg-muted px-2 py-1 text-xs font-medium">
+                      {voiceState === "idle" && "Idle"}
+                      {voiceState === "listening" && "Listening"}
+                      {voiceState === "processing" && "Processing"}
+                      {voiceState === "speaking" && "Speaking"}
+                    </span>
+                  </div>
+                  {redFlagAlert && (
+                    <div className="mt-3 rounded-lg border-l-4 border-destructive bg-destructive/10 p-3 text-destructive font-medium">
+                      Red-flag phrase detected. Please call staff now.
+                    </div>
+                  )}
+                  <div className="mt-3 space-y-2 max-h-32 overflow-y-auto">
+                    {transcript.map((b, i) => (
+                      <div key={i} className="rounded-lg border border-border bg-muted/30 p-2 text-sm">
+                        <strong>{b.role === "assistant" ? "Assistant" : "You"}:</strong> {b.text}
+                      </div>
+                    ))}
+                  </div>
+                </CardContent>
+              </CardHeader>
+            </Card>
+          </motion.div>
+        )}
       </main>
     </>
   );
