@@ -194,9 +194,10 @@ To send vitals **from hardware** (SpO2, HR, temp, BP) into the app:
 
 **Using your MacBook camera (local development):**
 
-- Defaults are already set: `CAMERA_INDEX=0`, `CAMERA_PIPELINE` empty. The app will use the built-in webcam.
-- **macOS:** The first time you open the kiosk stream, grant **Camera** access to **Terminal** (or **Python**) in **System Preferences → Privacy & Security → Camera**. If the camera fails to open, the error message will remind you.
-- Open **http://localhost:8000/kiosk-station** and the live view + QR scan use your MacBook camera.
+- Defaults are already set: `CAMERA_INDEX=0`, `CAMERA_PIPELINE` empty. The app uses the built-in webcam and, on macOS, tries the AVFoundation backend for better compatibility.
+- **macOS:** Grant **Camera** access to **Terminal** (or **Python**) in **System Settings → Privacy & Security → Camera**. If the camera fails to open, the error message will remind you.
+- Open **http://localhost:8000/kiosk-station** — the live view and QR scan use your MacBook camera.
+- If the camera still doesn’t open (e.g. with `opencv-python-headless`), install the full OpenCV for local dev: `pip install opencv-python` (then run the app again). The Docker/deploy build can keep using headless.
 
 **Jetson Nano (production kiosk):**
 

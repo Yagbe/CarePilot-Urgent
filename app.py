@@ -13,6 +13,7 @@ import hmac
 import os
 import random
 import re
+import sys
 import asyncio
 import threading
 import time
@@ -241,12 +242,21 @@ class CameraManager:
             raise RuntimeError("OpenCV is not available.")
         if self._running:
             return
+        cap = None
         if self.pipeline:
             cap = cv2.VideoCapture(self.pipeline, cv2.CAP_GSTREAMER)
         else:
-            cap = cv2.VideoCapture(self.index)
-        if not cap.isOpened():
-            hint = " On macOS: grant Camera access to Terminal (or Python) in System Preferences → Privacy & Security → Camera."
+            # On macOS try AVFoundation first (native camera backend), then default
+            if sys.platform == "darwin":
+                api = getattr(cv2, "CAP_AVFOUNDATION", None)
+                if api is not None:
+                    cap = cv2.VideoCapture(self.index, api)
+                if cap is None or not cap.isOpened():
+                    cap = cv2.VideoCapture(self.index)
+            else:
+                cap = cv2.VideoCapture(self.index)
+        if cap is None or not cap.isOpened():
+            hint = " On macOS: grant Camera access to Terminal (or Python) in System Settings → Privacy & Security → Camera."
             raise RuntimeError(f"Unable to open camera ({self.pipeline or self.index}).{hint}")
         cap.set(cv2.CAP_PROP_FRAME_WIDTH, self.width)
         cap.set(cv2.CAP_PROP_FRAME_HEIGHT, self.height)
