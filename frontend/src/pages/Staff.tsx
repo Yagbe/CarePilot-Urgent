@@ -128,6 +128,7 @@ export function Staff() {
   };
 
   const handleSimVitalsAll = () => {
+    if (!data?.items?.length) return;
     Promise.all(data.items.map((item) => postVitalsSimulate(item.id))).then(load).catch(() => {});
   };
 
