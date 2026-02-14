@@ -730,6 +730,32 @@ def _seed_demo_patients() -> None:
                     patients[pid]["checked_in_at"],
                 ),
             )
+            # Seed one simulated vitals row per demo patient so "Vitals" and Live Vitals panel show data
+            spo2 = random.randint(96, 100)
+            hr = random.randint(62, 98)
+            temp_c = round(random.uniform(36.4, 37.6), 1)
+            bp_sys = random.randint(108, 132)
+            bp_dia = random.randint(68, 86)
+            ts = datetime.utcnow().isoformat()
+            DB_CONN.execute(
+                """
+                INSERT INTO vitals(pid, token, device_id, spo2, hr, temp_c, bp_sys, bp_dia, confidence, ts, simulated)
+                VALUES(?,?,?,?,?,?,?,?,?,?,?)
+                """,
+                (
+                    pid,
+                    patients[pid]["token"],
+                    "demo-seed",
+                    spo2,
+                    hr,
+                    temp_c,
+                    bp_sys,
+                    bp_dia,
+                    0.9,
+                    ts,
+                    1,
+                ),
+            )
         demo_mode = True
         DB_CONN.commit()
 

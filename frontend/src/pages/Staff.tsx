@@ -127,6 +127,10 @@ export function Staff() {
     postVitalsSimulate(pid).then(load).catch(() => {});
   };
 
+  const handleSimVitalsAll = () => {
+    Promise.all(data.items.map((item) => postVitalsSimulate(item.id))).then(load).catch(() => {});
+  };
+
   if (!data) {
     return (
       <>
@@ -190,6 +194,9 @@ export function Staff() {
         <Card>
           <CardContent className="flex flex-wrap gap-2 pt-6">
             <Button variant="secondary" onClick={handleSeedDemo}>Seed demo patients</Button>
+            <Button variant="secondary" onClick={handleSimVitalsAll} disabled={data.items.length === 0}>
+              Sim vitals for all
+            </Button>
             <Button variant="destructive" onClick={handleReset}>Reset</Button>
           </CardContent>
         </Card>
