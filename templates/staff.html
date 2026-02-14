@@ -149,6 +149,7 @@
             const flags = (i.red_flags || []);
             const flagsHtml = flags.length ? '<span class="flag-badge">' + esc(flags.join(', ')) + '</span>' : '<span class="muted">none detected</span>';
             const resourcesBullets = (i.suggested_resources || []).map(function (s) { return '<li>' + esc(s) + '</li>'; }).join('');
+            const resourceTags = (i.resource_tags || []).map(function (t) { return '<span class="status-pill">' + esc(t) + '</span>'; }).join(' ');
 
             return '<div class="patient-row">' +
               '<div style="display:flex;justify-content:space-between;gap:1rem;align-items:flex-start;">' +
@@ -177,6 +178,7 @@
                 '<div class="muted">Complexity: ' + esc(i.ai_complexity) + '</div>' +
                 '<div class="muted">Estimated visit: ' + esc(i.ai_visit_duration) + '-' + (Number(i.ai_visit_duration || 0) + 10) + ' min</div>' +
                 '<div class="muted">Estimated wait: ' + esc(i.estimated_wait_min) + ' min</div>' +
+                '<div class="muted">Readiness tags: ' + resourceTags + '</div>' +
                 '<div class="muted">Suggested resources:</div>' +
                 '<ul class="muted" style="margin:.4rem 0 .2rem 1rem;">' + resourcesBullets + '</ul>' +
               '</div>' +
@@ -213,7 +215,12 @@
     (function connectWs() {
       const proto = location.protocol === 'https:' ? 'wss' : 'ws';
       const ws = new WebSocket(proto + '://' + location.host + '/ws/queue');
-      ws.onmessage = function () { loadQueue(); };
+      ws.onmessage = function (event) {
+        try {
+          const payload = JSON.parse(event.data);
+          if (payload && payload.type === 'queue_update') loadQueue();
+        } catch (e) {}
+      };
       ws.onclose = function () { setTimeout(connectWs, 1200); };
       ws.onerror = function () { ws.close(); };
     })();

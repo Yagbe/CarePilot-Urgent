@@ -34,6 +34,13 @@
       d.textContent = String(v ?? '');
       return d.innerHTML;
     }
+    function freshnessLabel(updatedAt) {
+      if (!updatedAt) return 'Updated just now';
+      const then = new Date(updatedAt).getTime();
+      if (!then) return 'Updated just now';
+      const sec = Math.max(0, Math.floor((Date.now() - then) / 1000));
+      return 'Updated ' + sec + 's ago';
+    }
     function render(items) {
       const q = document.getElementById('queue');
       if (!items || !items.length) {
@@ -46,7 +53,7 @@
             '<div><strong>' + esc(i.token) + '</strong><br>' +
             '<span class="muted">Estimated wait: ' + esc(i.estimated_wait_min) + ' min</span><br>' +
             '<span class="muted">Position: #' + esc(i.position_in_line) + ' • Providers: ' + esc(i.providers_active) + '</span><br>' +
-            '<span class="microcopy">' + esc(i.eta_explanation || '') + '</span></div>' +
+            '<span class="microcopy">' + esc(i.eta_explanation || '') + ' • ' + esc(freshnessLabel(i.updated_at)) + '</span></div>' +
             '<span class="status-pill">' + esc(i.status_label) + '</span>' +
           '</div>' +
         '</div>';

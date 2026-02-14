@@ -38,6 +38,7 @@
       <div class="card">
         <h3 class="title">Last Check-in</h3>
         <div id="success-card" class="card" style="display:none; border-left:4px solid var(--ok);">
+          <h2 class="title" id="checkin-banner">✅ CHECKED IN</h2>
           <div class="token-card" id="token-out">UC-0000</div>
           <p class="muted" id="message-out">Checked in.</p>
           <p class="muted">Estimated wait: <strong id="wait-out">0</strong> min</p>
@@ -159,7 +160,7 @@
         setStatus('Scanning for QR...');
       });
 
-      setInterval(pollLastScan, 150);
+      setInterval(pollLastScan, 200);
       setStatus('Scanning for QR...');
     })();
   </script>

@@ -32,6 +32,7 @@ Open: `http://localhost:8000/`
 - `GET /staff/login` -> Staff login
 - `GET /staff` -> Staff queue operations (protected)
 - `GET /analytics` -> Staff analytics (protected)
+- `GET /privacy` -> Privacy + safety statement
 
 Dedicated station URLs for multi-computer tests:
 - `GET /patient-station` -> Patient computer
@@ -154,6 +155,8 @@ This app currently uses in-memory storage for hackathon speed.
 - Verify camera:
   - `ls /dev/video*`
   - `v4l2-ctl --list-devices`
+- Recommended low-latency pipeline (`CAMERA_PIPELINE`):
+  - `v4l2src device=/dev/video0 ! video/x-raw,width=1280,height=720,framerate=30/1 ! videoconvert ! appsink drop=1 max-buffers=1 sync=false`
 - Quick OpenCV test:
   - `python3 -c "import cv2; c=cv2.VideoCapture(0); ok,f=c.read(); print(ok, None if f is None else f.shape); c.release()"`
 - If pip OpenCV is difficult on Jetson, install OS package:

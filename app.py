@@ -13,9 +13,11 @@ import hmac
 import os
 import random
 import re
+import asyncio
 import threading
 import time
 import uuid
+from collections import deque
 from datetime import datetime, timedelta
 from pathlib import Path
 from typing import Any, Optional
@@ -55,6 +57,12 @@ issued_tokens: set[str] = set()
 arrival_windows_count = {"now": 0, "soon": 0, "later": 0}
 last_checkin_by_code: dict[str, float] = {}
 WS_CLIENTS: set[WebSocket] = set()
+STATE_LOCK = threading.RLock()
+AUDIT_LOG = deque(maxlen=200)
+LOGIN_ATTEMPTS_BY_IP: dict[str, list[float]] = {}
+
+if APP_ENV == "production" and STAFF_ACCESS_PASSWORD == "1234":
+    raise RuntimeError("Refusing to start with default staff password in production.")
 
 _TEMPLATES_DIR = Path(__file__).resolve().parent / "templates"
 _STATIC_DIR = Path(__file__).resolve().parent / "static"
@@ -108,6 +116,10 @@ class CameraManager:
             raise RuntimeError(f"Unable to open camera ({self.pipeline or self.index}).")
         cap.set(cv2.CAP_PROP_FRAME_WIDTH, self.width)
         cap.set(cv2.CAP_PROP_FRAME_HEIGHT, self.height)
+        try:
+            cap.set(cv2.CAP_PROP_BUFFERSIZE, 1)
+        except Exception:
+            pass
         self._cap = cap
         self._running = True
         self._thread = threading.Thread(target=self._loop, daemon=True)
@@ -182,11 +194,13 @@ camera_manager: Optional[CameraManager] = None
 
 def _camera() -> CameraManager:
     global camera_manager
-    if camera_manager is None:
-        camera_manager = CameraManager(CAMERA_INDEX, CAM_W, CAM_H, CAMERA_PIPELINE)
-    if not camera_manager._running:
-        camera_manager.start()
-    return camera_manager
+    with STATE_LOCK:
+        if camera_manager is None:
+            camera_manager = CameraManager(CAMERA_INDEX, CAM_W, CAM_H, CAMERA_PIPELINE)
+        manager = camera_manager
+    if not manager._running:
+        manager.start()
+    return manager
 
 
 def render(name: str, **kwargs: Any) -> str:
@@ -197,6 +211,17 @@ def render(name: str, **kwargs: Any) -> str:
     }
     base.update(kwargs)
     return env.get_template(name).render(**base)
+
+
+def _audit(event_type: str, details: dict[str, Any]) -> None:
+    with STATE_LOCK:
+        AUDIT_LOG.append(
+            {
+                "ts": datetime.utcnow().isoformat(),
+                "event_type": event_type,
+                "details": details,
+            }
+        )
 
 
 # -----------------------------------------------------------------------------
@@ -304,15 +329,16 @@ def next_pid() -> str:
 
 
 def next_token() -> str:
-    existing = {str(p.get("token", "")).upper() for p in patients.values()}
-    for _ in range(500):
-        candidate = f"UC-{random.randint(1000, 9999)}"
-        if candidate not in existing and candidate not in issued_tokens:
-            issued_tokens.add(candidate)
-            return candidate
-    fallback = f"UC-{uuid.uuid4().hex[:4].upper()}"
-    issued_tokens.add(fallback)
-    return fallback
+    with STATE_LOCK:
+        existing = {str(p.get("token", "")).upper() for p in patients.values()}
+        for _ in range(500):
+            candidate = f"UC-{random.randint(1000, 9999)}"
+            if candidate not in existing and candidate not in issued_tokens:
+                issued_tokens.add(candidate)
+                return candidate
+        fallback = f"UC-{uuid.uuid4().hex[:4].upper()}"
+        issued_tokens.add(fallback)
+        return fallback
 
 
 def full_name(patient: dict[str, Any]) -> str:
@@ -335,12 +361,13 @@ def _resolve_code(code: str) -> Optional[str]:
         parts = [x.strip() for x in raw.split("|") if x.strip()]
         candidates = parts + [raw]
 
-    for c in candidates:
-        if c in patients:
-            return c
-        for pid, p in patients.items():
-            if str(p.get("token", "")).upper() == c:
-                return pid
+    with STATE_LOCK:
+        for c in candidates:
+            if c in patients:
+                return c
+            for pid, p in patients.items():
+                if str(p.get("token", "")).upper() == c:
+                    return pid
     return None
 
 
@@ -359,12 +386,13 @@ def _simulate_wait_map(pids: list[str], providers: int) -> dict[str, int]:
     providers = max(1, providers)
     slots = [0] * max(1, providers)
     wait: dict[str, int] = {}
-    with_meta: list[tuple[str, int, str]] = []
-    for pid in pids:
-        p = patients.get(pid, {})
-        dur = int(p.get("ai_result", {}).get("estimated_visit_duration_minutes", 20))
-        lane = _lane_from_complexity(p.get("ai_result", {}).get("operational_complexity", ""))
-        with_meta.append((pid, dur, lane))
+    with STATE_LOCK:
+        with_meta: list[tuple[str, int, str]] = []
+        for pid in pids:
+            p = patients.get(pid, {})
+            dur = int(p.get("ai_result", {}).get("estimated_visit_duration_minutes", 20))
+            lane = _lane_from_complexity(p.get("ai_result", {}).get("operational_complexity", ""))
+            with_meta.append((pid, dur, lane))
 
     fast_queue = [x for x in with_meta if x[2] == "Fast"]
     other_queue = [x for x in with_meta if x[2] != "Fast"]
@@ -387,7 +415,8 @@ def _simulate_wait_map(pids: list[str], providers: int) -> dict[str, int]:
 
 
 def _queue_active() -> list[str]:
-    return [pid for pid in queue_order if pid in patients and patients[pid].get("status") != "done"]
+    with STATE_LOCK:
+        return [pid for pid in queue_order if pid in patients and patients[pid].get("status") != "done"]
 
 
 def _public_queue_items() -> list[dict[str, Any]]:
@@ -395,21 +424,22 @@ def _public_queue_items() -> list[dict[str, Any]]:
     waits = _simulate_wait_map(active, provider_count)
     now = datetime.utcnow().isoformat()
     out = []
-    for pos, pid in enumerate(active, start=1):
-        p = patients[pid]
-        typical = int(p.get("ai_result", {}).get("estimated_visit_duration_minutes", 20))
-        out.append({
-            "token": p.get("token"),
-            "status_label": status_label(p.get("status", "waiting")),
-            "estimated_wait_min": waits.get(pid, 0),
-            "position_in_line": pos,
-            "providers_active": provider_count,
-            "updated_at": now,
-            "eta_explanation": (
-                f"You're #{pos} in line • {provider_count} provider(s) • "
-                f"Typical visit {typical}-{typical + 10} min • Updated 0s ago"
-            ),
-        })
+    with STATE_LOCK:
+        for pos, pid in enumerate(active, start=1):
+            p = patients[pid]
+            typical = int(p.get("ai_result", {}).get("estimated_visit_duration_minutes", 20))
+            out.append({
+                "token": p.get("token"),
+                "status_label": status_label(p.get("status", "waiting")),
+                "estimated_wait_min": waits.get(pid, 0),
+                "position_in_line": pos,
+                "providers_active": provider_count,
+                "updated_at": now,
+                "eta_explanation": (
+                    f"You're #{pos} in line • {provider_count} provider(s) • "
+                    f"Typical visit {typical}-{typical + 10} min"
+                ),
+            })
     return out
 
 
@@ -417,11 +447,20 @@ def _staff_queue_items() -> list[dict[str, Any]]:
     active = _queue_active()
     waits = _simulate_wait_map(active, provider_count)
     out = []
-    for pid in active:
-        p = patients[pid]
-        ai = p.get("ai_result", {})
-        lane = _lane_from_complexity(ai.get("operational_complexity", ""))
-        out.append({
+    with STATE_LOCK:
+        for pid in active:
+            p = patients[pid]
+            ai = p.get("ai_result", {})
+            lane = _lane_from_complexity(ai.get("operational_complexity", ""))
+            tags = ["Nurse triage"]
+            c = str(ai.get("cluster", ""))
+            if "Respiratory" in c:
+                tags.extend(["mask station", "rapid test kit"])
+            if "GI" in c:
+                tags.append("hydration supplies")
+            if ai.get("red_flag_keywords_detected"):
+                tags.append("priority clinician review")
+            out.append({
             "id": pid,
             "token": p.get("token"),
             "full_name": full_name(p),
@@ -441,6 +480,7 @@ def _staff_queue_items() -> list[dict[str, Any]]:
             "symptom_list": ai.get("symptom_list", []),
             "suggested_resources": ai.get("suggested_resources", []),
             "lane": lane,
+            "resource_tags": tags,
         })
     return out
 
@@ -451,26 +491,32 @@ def _avg_wait(items: list[dict[str, Any]]) -> int:
 
 
 def _forecast(provider_override: Optional[int] = None) -> dict[str, Any]:
-    providers = provider_override or provider_count
+    with STATE_LOCK:
+        providers = provider_override or provider_count
+        aw_now = arrival_windows_count["now"]
+        aw_soon = arrival_windows_count["soon"]
+        aw_later = arrival_windows_count["later"]
     now = datetime.utcnow()
     seed = int(now.strftime("%Y%m%d%H")) * 10 + (now.minute // 6)
     rng = random.Random(seed)
     base = [
-        1 + arrival_windows_count["now"] * 0.4,
-        2 + arrival_windows_count["now"] * 0.5,
-        3 + arrival_windows_count["soon"] * 0.7,
-        4 + arrival_windows_count["soon"] * 0.8,
-        4 + arrival_windows_count["later"] * 0.6,
-        3 + arrival_windows_count["later"] * 0.5,
-        2 + arrival_windows_count["later"] * 0.4,
-        1 + arrival_windows_count["now"] * 0.3,
+        1 + aw_now * 0.4,
+        2 + aw_now * 0.5,
+        3 + aw_soon * 0.7,
+        4 + aw_soon * 0.8,
+        4 + aw_later * 0.6,
+        3 + aw_later * 0.5,
+        2 + aw_later * 0.4,
+        1 + aw_now * 0.3,
     ]
     arrivals = [max(0, int(round(v + rng.uniform(-0.4, 0.4)))) for v in base]
     avg_duration = 20
     current_items = _staff_queue_items()
     current_peak = max([i["estimated_wait_min"] for i in current_items], default=0)
     future_wait = [max(0, int(current_peak + (sum(arrivals[:i + 1]) * avg_duration / max(providers, 1)) - i * 8)) for i in range(len(arrivals))]
-    drop_to = max(0, int(max(future_wait) * max(provider_count, 1) / max(providers, 1)))
+    with STATE_LOCK:
+        pc = max(provider_count, 1)
+    drop_to = max(0, int(max(future_wait) * pc / max(providers, 1)))
     if max(future_wait) > 45:
         recommendation = f"Add 1 provider for next peak window; projected peak drops to ~{drop_to} min."
     else:
@@ -492,9 +538,10 @@ def _validate_dob(dob: str) -> None:
 
 def _seed_demo_patients() -> None:
     global demo_mode
-    if demo_mode:
-        return
-    samples = [
+    with STATE_LOCK:
+        if demo_mode:
+            return
+        samples = [
         ("Ava", "Miller", "Sore throat, fever, dry cough", "2 days", "now"),
         ("Liam", "Ng", "Nausea and abdominal cramping", "1 day", "soon"),
         ("Noah", "Patel", "Ankle pain after twist injury", "3 days", "later"),
@@ -502,11 +549,11 @@ def _seed_demo_patients() -> None:
         ("Mia", "Lee", "Cough with congestion and fatigue", "5 days", "now"),
         ("Ethan", "King", "Back pain and muscle stiffness", "1 week", "later"),
     ]
-    for first, last, symptoms, duration, window in samples:
-        pid = next_pid()
-        age = random.randint(18, 72)
-        ai = ai_structure_symptoms(symptoms, duration, age)
-        patients[pid] = {
+        for first, last, symptoms, duration, window in samples:
+            pid = next_pid()
+            age = random.randint(18, 72)
+            ai = ai_structure_symptoms(symptoms, duration, age)
+            patients[pid] = {
             "pid": pid,
             "token": next_token(),
             "first_name": first,
@@ -521,19 +568,21 @@ def _seed_demo_patients() -> None:
             "created_at": datetime.utcnow().isoformat(),
             "checked_in_at": datetime.utcnow().isoformat(),
         }
-        queue_order.append(pid)
-        arrival_windows_count[window] += 1
-    demo_mode = True
+            queue_order.append(pid)
+            arrival_windows_count[window] += 1
+        demo_mode = True
 
 
 def _reset_state() -> None:
     global provider_count, demo_mode
-    patients.clear()
-    queue_order.clear()
-    issued_tokens.clear()
-    arrival_windows_count.update({"now": 0, "soon": 0, "later": 0})
-    provider_count = 1
-    demo_mode = False
+    with STATE_LOCK:
+        patients.clear()
+        queue_order.clear()
+        issued_tokens.clear()
+        last_checkin_by_code.clear()
+        arrival_windows_count.update({"now": 0, "soon": 0, "later": 0})
+        provider_count = 1
+        demo_mode = False
 
 
 def _wait_for_pid(pid: str) -> int:
@@ -544,64 +593,61 @@ def _wait_for_pid(pid: str) -> int:
 
 def _kiosk_checkin_result(code: str) -> dict[str, Any]:
     raw = (code or "").strip().upper()
-    if raw:
-        last = last_checkin_by_code.get(raw, 0.0)
-        if time.time() - last < 3.0:
-            return {
-                "ok": False,
-                "checked_in": False,
-                "message": "Scan cooldown active. Please wait 3 seconds.",
-                "token": "",
-                "estimated_wait_min": 0,
-            }
+    parsed = raw.split("|")[0].strip() if "|" in raw else raw
     pid = _resolve_code(code)
     if not pid:
         return {"ok": False, "checked_in": False, "message": "Code not found.", "token": "", "estimated_wait_min": 0}
 
-    pid_last = last_checkin_by_code.get(pid, 0.0)
-    if time.time() - pid_last < 3.0:
-        return {
-            "ok": False,
-            "checked_in": False,
-            "message": "Scan cooldown active. Please wait 3 seconds.",
-            "token": "",
-            "estimated_wait_min": 0,
-        }
-
-    if raw:
+    with STATE_LOCK:
+        p = patients.get(pid)
+        if not p:
+            return {"ok": False, "checked_in": False, "message": "Code not found.", "token": "", "estimated_wait_min": 0}
+        token_key = str(p.get("token", "")).upper()
         now = time.time()
-        last_checkin_by_code[raw] = now
-        last_checkin_by_code[pid] = now
+        for key in {pid, token_key, parsed}:
+            if key and (now - last_checkin_by_code.get(key, 0.0) < 3.0):
+                return {
+                    "ok": False,
+                    "checked_in": False,
+                    "message": "Scan cooldown active. Please wait 3 seconds.",
+                    "token": "",
+                    "estimated_wait_min": 0,
+                }
+        for key in {pid, token_key}:
+            if key:
+                last_checkin_by_code[key] = now
+
         if len(last_checkin_by_code) > 400:
             cutoff = now - 60.0
             for k, ts in list(last_checkin_by_code.items()):
                 if ts < cutoff:
                     last_checkin_by_code.pop(k, None)
 
-    p = patients[pid]
-    if p.get("status") != "pending":
+        if p.get("status") != "pending":
+            wait = _wait_for_pid(pid)
+            _audit("checkin_repeat", {"pid": pid, "token": p.get("token"), "wait": wait})
+            return {
+                "ok": True,
+                "checked_in": True,
+                "message": "Already checked in.",
+                "token": p["token"],
+                "estimated_wait_min": wait,
+            }
+
+        p["status"] = "waiting"
+        p["checked_in_at"] = datetime.utcnow().isoformat()
+        if pid not in queue_order:
+            queue_order.append(pid)
+
         wait = _wait_for_pid(pid)
+        _audit("checkin", {"pid": pid, "token": p.get("token"), "wait": wait})
         return {
             "ok": True,
             "checked_in": True,
-            "message": "Already checked in.",
+            "message": "You are checked in.",
             "token": p["token"],
             "estimated_wait_min": wait,
         }
-
-    p["status"] = "waiting"
-    p["checked_in_at"] = datetime.utcnow().isoformat()
-    if pid not in queue_order:
-        queue_order.append(pid)
-
-    wait = _wait_for_pid(pid)
-    return {
-        "ok": True,
-        "checked_in": True,
-        "message": "You are checked in.",
-        "token": p["token"],
-        "estimated_wait_min": wait,
-    }
 
 
 def _session_signature(expires_ts: int) -> str:
@@ -634,6 +680,15 @@ def _require_staff(request: Request) -> None:
         raise HTTPException(status_code=401, detail="Staff authentication required.")
 
 
+def _client_ip(request: Request) -> str:
+    xfwd = request.headers.get("x-forwarded-for", "")
+    if xfwd:
+        return xfwd.split(",")[0].strip()
+    if request.client and request.client.host:
+        return request.client.host
+    return "unknown"
+
+
 def _lane_counts(items: Optional[list[dict[str, Any]]] = None) -> dict[str, int]:
     data = items if items is not None else _staff_queue_items()
     counts = {"Fast": 0, "Standard": 0, "Complex": 0}
@@ -645,26 +700,32 @@ def _lane_counts(items: Optional[list[dict[str, Any]]] = None) -> dict[str, int]
 
 
 def _queue_snapshot_payload() -> dict[str, Any]:
+    with STATE_LOCK:
+        pc = provider_count
     return {
         "type": "queue_update",
-        "provider_count": provider_count,
+        "provider_count": pc,
         "updated_at": datetime.utcnow().isoformat(),
         "items": _public_queue_items(),
     }
 
 
 async def _broadcast_queue_update() -> None:
-    if not WS_CLIENTS:
+    with STATE_LOCK:
+        sockets = list(WS_CLIENTS)
+    if not sockets:
         return
     payload = _queue_snapshot_payload()
     stale: list[WebSocket] = []
-    for ws in WS_CLIENTS:
+    for ws in sockets:
         try:
             await ws.send_text(json.dumps(payload))
         except Exception:
             stale.append(ws)
-    for ws in stale:
-        WS_CLIENTS.discard(ws)
+    if stale:
+        with STATE_LOCK:
+            for ws in stale:
+                WS_CLIENTS.discard(ws)
 
 
 # -----------------------------------------------------------------------------
@@ -746,7 +807,8 @@ def intake_submit(
     pid = next_pid()
     age = _parse_age_from_dob((dob or "").strip())
     ai = ai_structure_symptoms(symptoms, duration_text, age)
-    patients[pid] = {
+    with STATE_LOCK:
+        patients[pid] = {
         "pid": pid,
         "token": next_token(),
         "first_name": first_name,
@@ -760,14 +822,16 @@ def intake_submit(
         "status": "pending",
         "created_at": datetime.utcnow().isoformat(),
         "checked_in_at": None,
-    }
-    arrival_windows_count[window] += 1
+        }
+        arrival_windows_count[window] += 1
+    _audit("intake_created", {"pid": pid, "arrival_window": window})
     return RedirectResponse(request.url_for("qr_page", pid=pid), status_code=302)
 
 
 @app.get("/qr/{pid}", response_class=HTMLResponse)
 def qr_page(pid: str):
-    p = patients.get(pid)
+    with STATE_LOCK:
+        p = patients.get(pid)
     if not p:
         raise HTTPException(404, "Patient not found.")
     return render(
@@ -781,9 +845,10 @@ def qr_page(pid: str):
 
 @app.get("/qr-img/{pid}")
 def qr_image(pid: str):
-    if pid not in patients:
-        raise HTTPException(404, "Patient not found.")
-    payload = f"{pid}|{patients[pid]['token']}"
+    with STATE_LOCK:
+        if pid not in patients:
+            raise HTTPException(404, "Patient not found.")
+        payload = f"{pid}|{patients[pid]['token']}"
     img = qrcode.make(payload)
     buf = io.BytesIO()
     img.save(buf, format="PNG")
@@ -869,30 +934,38 @@ def api_public_queue():
 @app.websocket("/ws/queue")
 async def ws_queue(websocket: WebSocket):
     await websocket.accept()
-    WS_CLIENTS.add(websocket)
+    with STATE_LOCK:
+        WS_CLIENTS.add(websocket)
     await websocket.send_text(json.dumps(_queue_snapshot_payload()))
     try:
         while True:
-            await websocket.receive_text()
+            await websocket.send_text(json.dumps({"type": "ping", "ts": datetime.utcnow().isoformat()}))
+            await asyncio.sleep(20)
     except WebSocketDisconnect:
-        WS_CLIENTS.discard(websocket)
+        with STATE_LOCK:
+            WS_CLIENTS.discard(websocket)
     except Exception:
-        WS_CLIENTS.discard(websocket)
+        with STATE_LOCK:
+            WS_CLIENTS.discard(websocket)
 
 
 @app.get("/staff", response_class=HTMLResponse)
 def staff_page(request: Request):
     if not _is_staff_authenticated(request):
         return RedirectResponse("/staff/login", status_code=302)
-    return render("staff.html", page="staff", provider_count=provider_count)
+    with STATE_LOCK:
+        pc = provider_count
+    return render("staff.html", page="staff", provider_count=pc)
 
 
 @app.get("/api/staff-queue")
 def api_staff_queue(request: Request):
     _require_staff(request)
     items = _staff_queue_items()
+    with STATE_LOCK:
+        pc = provider_count
     return {
-        "provider_count": provider_count,
+        "provider_count": pc,
         "avg_wait_min": _avg_wait(items),
         "lane_counts": _lane_counts(items),
         "updated_at": datetime.utcnow().isoformat(),
@@ -903,13 +976,15 @@ def api_staff_queue(request: Request):
 @app.post("/api/staff/status/{pid}")
 async def api_staff_status(request: Request, pid: str, status: str = Form(...)):
     _require_staff(request)
-    if pid not in patients:
-        raise HTTPException(404, "Patient not found.")
-    if status not in {"called", "in_room", "done"}:
-        raise HTTPException(400, "Invalid status.")
-    patients[pid]["status"] = status
-    if status == "done":
-        queue_order[:] = [x for x in queue_order if x != pid]
+    with STATE_LOCK:
+        if pid not in patients:
+            raise HTTPException(404, "Patient not found.")
+        if status not in {"called", "in_room", "done"}:
+            raise HTTPException(400, "Invalid status.")
+        patients[pid]["status"] = status
+        if status == "done":
+            queue_order[:] = [x for x in queue_order if x != pid]
+    _audit("status_change", {"pid": pid, "status": status})
     await _broadcast_queue_update()
     return {"ok": True}
 
@@ -918,22 +993,34 @@ async def api_staff_status(request: Request, pid: str, status: str = Form(...)):
 async def api_provider_count(request: Request, count: int = Form(...)):
     _require_staff(request)
     global provider_count
-    provider_count = min(3, max(1, int(count)))
+    with STATE_LOCK:
+        provider_count = min(3, max(1, int(count)))
+        pc = provider_count
+    _audit("provider_count_change", {"provider_count": pc})
     await _broadcast_queue_update()
-    return {"ok": True, "provider_count": provider_count}
+    return {"ok": True, "provider_count": pc}
 
 
 @app.get("/analytics", response_class=HTMLResponse)
 def analytics_page(request: Request):
     if not _is_staff_authenticated(request):
         return RedirectResponse("/staff/login", status_code=302)
-    return render("analytics.html", page="analytics", provider_count=provider_count)
+    with STATE_LOCK:
+        pc = provider_count
+    return render("analytics.html", page="analytics", provider_count=pc)
+
+
+@app.get("/privacy", response_class=HTMLResponse)
+def privacy_page():
+    return render("privacy.html", page="privacy")
 
 
 @app.get("/api/analytics")
 def api_analytics(request: Request, providers: Optional[int] = None):
     _require_staff(request)
-    providers = min(3, max(1, providers or provider_count))
+    with STATE_LOCK:
+        current_provider = provider_count
+    providers = min(3, max(1, providers or current_provider))
     forecast = _forecast(providers)
     items = _staff_queue_items()
     return {
@@ -950,6 +1037,7 @@ def api_analytics(request: Request, providers: Optional[int] = None):
 async def demo_seed(request: Request):
     _require_staff(request)
     _seed_demo_patients()
+    _audit("demo_seed", {"demo_mode": True})
     await _broadcast_queue_update()
     return {"ok": True, "demo_mode": True}
 
@@ -958,6 +1046,7 @@ async def demo_seed(request: Request):
 async def demo_reset(request: Request):
     _require_staff(request)
     _reset_state()
+    _audit("demo_reset", {"demo_mode": False})
     await _broadcast_queue_update()
     return {"ok": True, "demo_mode": False}
 
@@ -971,8 +1060,17 @@ def staff_login_page(request: Request):
 
 @app.post("/staff/login", response_class=HTMLResponse)
 def staff_login_submit(request: Request, password: str = Form("")):
-    if password != STAFF_ACCESS_PASSWORD:
-        return render("staff_login.html", page="staff_login", error="Invalid staff password.")
+    ip = _client_ip(request)
+    now = time.time()
+    with STATE_LOCK:
+        attempts = [ts for ts in LOGIN_ATTEMPTS_BY_IP.get(ip, []) if now - ts < 60]
+        if len(attempts) >= 5:
+            return render("staff_login.html", page="staff_login", error="Too many attempts. Please wait a minute.")
+        if password != STAFF_ACCESS_PASSWORD:
+            attempts.append(now)
+            LOGIN_ATTEMPTS_BY_IP[ip] = attempts
+            return render("staff_login.html", page="staff_login", error="Invalid staff password.")
+        LOGIN_ATTEMPTS_BY_IP[ip] = []
     response = RedirectResponse("/staff", status_code=302)
     response.set_cookie(
         STAFF_SESSION_COOKIE,
@@ -982,6 +1080,7 @@ def staff_login_submit(request: Request, password: str = Form("")):
         secure=FORCE_HTTPS,
         samesite="lax",
     )
+    _audit("staff_login", {"ip": ip})
     return response
 
 
@@ -992,12 +1091,23 @@ def staff_logout():
     return response
 
 
+@app.get("/api/audit")
+def api_audit(request: Request):
+    _require_staff(request)
+    with STATE_LOCK:
+        events = list(AUDIT_LOG)
+    return {"count": len(events), "events": events}
+
+
 @app.on_event("shutdown")
 def shutdown_camera_manager():
     global camera_manager
-    if camera_manager is not None:
-        camera_manager.stop()
+    with STATE_LOCK:
+        manager = camera_manager
         camera_manager = None
+        WS_CLIENTS.clear()
+    if manager is not None:
+        manager.stop()
 
 
 if __name__ == "__main__":
