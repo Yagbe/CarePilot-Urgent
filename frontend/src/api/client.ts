@@ -28,6 +28,7 @@ export async function postKioskCheckin(code: string): Promise<{
   message: string;
   token: string;
   estimated_wait_min: number;
+  display_name?: string;
 }> {
   const r = await fetch(`${API}/api/kiosk-checkin/json`, {
     method: "POST",

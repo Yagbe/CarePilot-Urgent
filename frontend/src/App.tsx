@@ -2,7 +2,6 @@ import { BrowserRouter, Routes, Route, Navigate } from "react-router-dom";
 import { Home } from "@/pages/Home";
 import { Intake } from "@/pages/Intake";
 import { QR } from "@/pages/QR";
-import { Kiosk } from "@/pages/Kiosk";
 import { KioskCamera } from "@/pages/KioskCamera";
 import { Display } from "@/pages/Display";
 import { Staff } from "@/pages/Staff";
@@ -18,8 +17,8 @@ function App() {
         <Route path="/patient-station" element={<Navigate to="/intake" replace />} />
         <Route path="/intake" element={<Intake />} />
         <Route path="/qr/:pid" element={<QR />} />
-        <Route path="/kiosk-station" element={<Kiosk />} />
-        <Route path="/kiosk-station/camera" element={<KioskCamera />} />
+        <Route path="/kiosk-station" element={<KioskCamera />} />
+        <Route path="/kiosk-station/camera" element={<Navigate to="/kiosk-station" replace />} />
         <Route path="/waiting-room-station" element={<Navigate to="/display" replace />} />
         <Route path="/display" element={<Display />} />
         <Route path="/staff-station" element={<Navigate to="/staff" replace />} />

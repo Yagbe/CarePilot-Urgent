@@ -782,6 +782,7 @@ def _kiosk_checkin_result(code: str) -> dict[str, Any]:
                 "message": "Already checked in.",
                 "token": p["token"],
                 "estimated_wait_min": wait,
+                "display_name": full_name(p),
             }
 
         p["status"] = "waiting"
@@ -803,6 +804,7 @@ def _kiosk_checkin_result(code: str) -> dict[str, Any]:
             "message": "You are checked in.",
             "token": p["token"],
             "estimated_wait_min": wait,
+            "display_name": full_name(p),
         }
 
 

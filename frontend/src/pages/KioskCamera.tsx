@@ -34,6 +34,7 @@ export function KioskCamera() {
     token: string;
     message: string;
     estimated_wait_min: number;
+    display_name?: string;
   } | null>(null);
   const [scanningEnabled, setScanningEnabled] = useState(true);
   const [manualCode, setManualCode] = useState("");
@@ -57,6 +58,7 @@ export function KioskCamera() {
           token: res.token,
           message: res.message,
           estimated_wait_min: res.estimated_wait_min ?? 0,
+          display_name: res.display_name,
         });
         beep();
         if (fromCamera) {
@@ -173,10 +175,10 @@ export function KioskCamera() {
       <main className="mx-auto max-w-4xl space-y-6 px-4 py-6">
         <Card>
           <CardHeader>
-            <CardTitle>Camera QR Check-in</CardTitle>
+            <CardTitle>Kiosk Check-in</CardTitle>
             <CardContent className="pt-0">
               <p className="text-muted-foreground text-sm">
-                Point the patient's QR code at the USB camera. This station shows token and wait only.
+                Scan the patient's QR code with the camera, or enter their token/code below.
               </p>
               <div className="mt-3 rounded-lg border-l-4 border-primary bg-muted/30 p-3">
                 <strong>{status}</strong>
@@ -198,43 +200,65 @@ export function KioskCamera() {
           </Card>
           <Card>
             <CardHeader>
-              <CardTitle>Last Check-in</CardTitle>
+              <CardTitle>Enter token or code</CardTitle>
               <CardContent className="space-y-2 pt-0">
                 {successCard ? (
                   <motion.div
                     initial={{ opacity: 0, height: 0 }}
                     animate={{ opacity: 1, height: "auto" }}
-                    className="rounded-lg border-l-4 border-green-600 bg-green-50 p-3 dark:bg-green-950"
+                    className="space-y-3 rounded-lg border-l-4 border-green-600 bg-green-50 p-4 dark:bg-green-950"
                   >
-                    <p className="text-lg font-bold text-green-900 dark:text-green-100">✓ CHECKED IN</p>
-                    <p className="font-mono text-xl font-bold text-green-800 dark:text-green-200">{successCard.token}</p>
+                    <p className="text-xl font-bold text-green-900 dark:text-green-100">✓ You're checked in</p>
+                    {successCard.display_name && (
+                      <p className="text-lg text-green-800 dark:text-green-200">
+                        Welcome, <strong>{successCard.display_name}</strong>.
+                      </p>
+                    )}
                     <p className="text-green-800 dark:text-green-200">{successCard.message}</p>
-                    <p className="text-muted-foreground text-sm">Estimated wait: <strong>{successCard.estimated_wait_min}</strong> min</p>
+                    <p className="font-mono text-2xl font-bold text-green-800 dark:text-green-200">{successCard.token}</p>
+                    <p className="text-green-800 dark:text-green-200">
+                      Estimated wait: <strong>{successCard.estimated_wait_min} min</strong>
+                    </p>
+                    <p className="text-sm text-green-700 dark:text-green-300 border-t border-green-300 dark:border-green-700 pt-2 mt-2">
+                      Watch the waiting room screen for your token to be called.
+                    </p>
+                    <Button
+                      type="button"
+                      variant="secondary"
+                      size="sm"
+                      className="mt-2"
+                      onClick={() => {
+                        setSuccessCard(null);
+                        setScanningEnabled(true);
+                        setStatus("Scanning for QR…");
+                      }}
+                    >
+                      Next patient
+                    </Button>
                   </motion.div>
-                ) : null}
-                <Button variant="secondary" size="sm" onClick={() => setScanningEnabled(true)}>
-                  Resume scanning
-                </Button>
-                <hr className="my-3 border-border" />
-                <CardTitle className="text-base">Manual Fallback</CardTitle>
-                <form
-                  className="mt-2 space-y-2"
-                  onSubmit={(e) => {
-                    e.preventDefault();
-                    submitCode(manualCode, false);
-                  }}
-                >
-                  <Label htmlFor="manual-code">Token / code</Label>
-                  <Input
-                    id="manual-code"
-                    value={manualCode}
-                    onChange={(e) => setManualCode(e.target.value)}
-                    placeholder="UC-1234 or A1B2C3D4"
-                  />
-                  <Button type="submit" disabled={submitting}>
-                    Check In
-                  </Button>
-                </form>
+                ) : (
+                  <>
+                    <form
+                      className="space-y-2"
+                      onSubmit={(e) => {
+                        e.preventDefault();
+                        submitCode(manualCode, false);
+                      }}
+                    >
+                      <Label htmlFor="manual-code">Token or code</Label>
+                      <Input
+                        id="manual-code"
+                        value={manualCode}
+                        onChange={(e) => setManualCode(e.target.value)}
+                        placeholder="UC-1234 or A1B2C3D4"
+                        className="font-mono text-lg"
+                      />
+                      <Button type="submit" disabled={submitting} className="w-full">
+                        {submitting ? "Checking in…" : "Check In"}
+                      </Button>
+                    </form>
+                  </>
+                )}
               </CardContent>
             </CardHeader>
           </Card>
