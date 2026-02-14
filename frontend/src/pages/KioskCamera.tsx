@@ -4,9 +4,9 @@ import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
-import { postKioskCheckin, postAiChat } from "@/api/client";
+import { postKioskCheckin, postAiChat, getVitalsByToken, type VitalsReading } from "@/api/client";
 import { motion } from "framer-motion";
-import { Mic } from "lucide-react";
+import { Mic, Activity } from "lucide-react";
 import { VitalsForm } from "@/components/vitals/VitalsForm";
 
 function beep() {
@@ -47,6 +47,8 @@ export function KioskCamera() {
   const [redFlagAlert, setRedFlagAlert] = useState(false);
   const recognitionRef = useRef<{ start: () => void; abort: () => void } | null>(null);
   const announcedWaitRef = useRef(false);
+  const [autoVitals, setAutoVitals] = useState<VitalsReading | null>(null);
+  const [showManualVitals, setShowManualVitals] = useState(false);
 
   const submitCode = useCallback(async (code: string, fromCamera: boolean) => {
     if (!code.trim()) return;
@@ -61,7 +63,19 @@ export function KioskCamera() {
           estimated_wait_min: res.estimated_wait_min ?? 0,
           display_name: res.display_name,
         });
+        setAutoVitals(null);
+        setShowManualVitals(false);
         beep();
+        // Tell local sensor bridge (Nano) which patient to send vitals for
+        try {
+          await fetch("http://localhost:9999/current-token", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ token: res.token }),
+          });
+        } catch {
+          // Token receiver not running (e.g. not on Nano); sensors may use CAREPILOT_TOKEN manually
+        }
         if (fromCamera) {
           setScanningEnabled(false);
           cooldownUntilRef.current = Date.now() + 3000;
@@ -185,12 +199,33 @@ export function KioskCamera() {
 
   const handleNextPatient = () => {
     setSuccessCard(null);
+    setAutoVitals(null);
+    setShowManualVitals(false);
     setScanningEnabled(true);
     setStatus("Scanning for QR…");
     setTranscript([]);
     setRedFlagAlert(false);
     announcedWaitRef.current = false;
   };
+
+  // Poll for vitals when patient is checked in (sensors auto-submit to API)
+  useEffect(() => {
+    if (!successCard?.token) return;
+    let cancelled = false;
+    const poll = () => {
+      getVitalsByToken(successCard.token)
+        .then((r) => {
+          if (!cancelled && r.vitals) setAutoVitals(r.vitals);
+        })
+        .catch(() => {});
+    };
+    poll();
+    const t = setInterval(poll, 2000);
+    return () => {
+      cancelled = true;
+      clearInterval(t);
+    };
+  }, [successCard?.token]);
 
   return (
     <>
@@ -251,9 +286,63 @@ export function KioskCamera() {
               </Button>
             </div>
 
-            <div className="flex justify-center">
-              <VitalsForm token={successCard.token} />
-            </div>
+            <Card className="text-center">
+              <CardHeader>
+                <CardTitle className="flex items-center justify-center gap-2 text-base">
+                  <Activity className="h-5 w-5" />
+                  Vitals (from sensors)
+                </CardTitle>
+                <CardContent className="pt-0">
+                  {!autoVitals && (
+                    <p className="text-muted-foreground text-sm py-4">
+                      Collecting vitals from sensors… The system will record them automatically. No need to enter anything.
+                    </p>
+                  )}
+                  {autoVitals && (
+                    <div className="grid grid-cols-2 sm:grid-cols-4 gap-3 py-2">
+                      {autoVitals.spo2 != null && (
+                        <div className="rounded-lg bg-muted/50 p-3">
+                          <p className="text-muted-foreground text-xs">SpO2</p>
+                          <p className="text-xl font-bold">{autoVitals.spo2}%</p>
+                        </div>
+                      )}
+                      {autoVitals.hr != null && (
+                        <div className="rounded-lg bg-muted/50 p-3">
+                          <p className="text-muted-foreground text-xs">Heart rate</p>
+                          <p className="text-xl font-bold">{autoVitals.hr} bpm</p>
+                        </div>
+                      )}
+                      {autoVitals.temp_c != null && (
+                        <div className="rounded-lg bg-muted/50 p-3">
+                          <p className="text-muted-foreground text-xs">Temp</p>
+                          <p className="text-xl font-bold">{autoVitals.temp_c} °C</p>
+                        </div>
+                      )}
+                      {(autoVitals.bp_sys != null || autoVitals.bp_dia != null) && (
+                        <div className="rounded-lg bg-muted/50 p-3">
+                          <p className="text-muted-foreground text-xs">BP</p>
+                          <p className="text-xl font-bold">{autoVitals.bp_sys ?? "—"} / {autoVitals.bp_dia ?? "—"}</p>
+                        </div>
+                      )}
+                    </div>
+                  )}
+                  <Button
+                    type="button"
+                    variant="ghost"
+                    size="sm"
+                    className="mt-2 text-muted-foreground"
+                    onClick={() => setShowManualVitals((v) => !v)}
+                  >
+                    {showManualVitals ? "Hide manual entry" : "Enter manually if sensors didn’t work"}
+                  </Button>
+                  {showManualVitals && (
+                    <div className="mt-4 max-w-md mx-auto">
+                      <VitalsForm token={successCard.token} onSuccess={() => getVitalsByToken(successCard.token).then((r) => r.vitals && setAutoVitals(r.vitals))} />
+                    </div>
+                  )}
+                </CardContent>
+              </CardHeader>
+            </Card>
 
             <Card className="text-center">
               <CardHeader>

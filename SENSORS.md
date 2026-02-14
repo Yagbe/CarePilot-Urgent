@@ -63,3 +63,34 @@ For **temperature only** (e.g. DS18B20):
 4. To switch patients, stop the script (Ctrl+C), set **CAREPILOT_TOKEN** to the new token, and run the script again.
 
 Optionally, another process can write the current kiosk token to a file and you set **CAREPILOT_TOKEN_FILE** so the bridge always sends vitals for the last checked-in patient.
+
+---
+
+## 5. Fully automatic flow (no patient entry)
+
+The kiosk page **does not ask the patient to enter vitals**. When a patient checks in (QR or code), the system:
+
+1. **Kiosk** sends the patient’s token to a small **token receiver** running on the same machine (e.g. Nano).
+2. The **sensor bridge** reads that token from a file and POSTs vitals to the API for that patient.
+3. The **kiosk** polls the API and shows “Collecting vitals from sensors…” then displays the values as they arrive.
+
+**On the kiosk machine (e.g. Jetson Nano), run two processes:**
+
+**Terminal 1 – token receiver** (so the kiosk can tell the bridge who the current patient is):
+
+```bash
+export TOKEN_FILE=/tmp/carepilot_current_token.txt
+python scripts/token_receiver.py
+```
+
+Listens on port 9999. When the kiosk page has a check-in, it POSTs the token to `http://localhost:9999/current-token`; the receiver writes it to `TOKEN_FILE`.
+
+**Terminal 2 – sensor bridge** (reads sensors and sends vitals for the current token):
+
+```bash
+export CAREPILOT_URL=https://carepilot-urgent.onrender.com
+export CAREPILOT_TOKEN_FILE=/tmp/carepilot_current_token.txt
+python scripts/sensor_bridge.py
+```
+
+The bridge re-reads the token file each time, so when a new patient checks in, the next submission uses their token. Vitals appear on the kiosk and in the staff queue automatically. The patient never types vitals; manual entry is only a fallback (“Enter manually if sensors didn’t work”).

@@ -1344,6 +1344,19 @@ def api_vitals_pid(request: Request, pid: str):
     return {"ok": True, "vitals": v}
 
 
+@app.get("/api/vitals/by-token")
+def api_vitals_by_token(token: str = ""):
+    """Public: return latest vitals for patient by token (for kiosk to show auto-collected vitals)."""
+    code = (token or "").strip()
+    if not code:
+        raise HTTPException(400, "token is required.")
+    resolved_pid = _resolve_code(code)
+    if not resolved_pid:
+        raise HTTPException(404, "Patient not found.")
+    v = _latest_vitals_for_pid(resolved_pid)
+    return {"ok": True, "vitals": v}
+
+
 @app.post("/api/vitals/simulate")
 async def api_vitals_simulate(request: Request, pid: str = Form("")):
     _require_staff(request)

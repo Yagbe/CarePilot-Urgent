@@ -168,6 +168,13 @@ export async function getVitalsForPatient(pid: string): Promise<{ ok: boolean; v
   return r.json();
 }
 
+/** Kiosk: get latest vitals for patient by token (no staff auth). Used when sensors auto-submit. */
+export async function getVitalsByToken(token: string): Promise<{ ok: boolean; vitals: VitalsReading | null }> {
+  const r = await fetch(`${API}/api/vitals/by-token?token=${encodeURIComponent(token)}`, { credentials: "same-origin" });
+  if (!r.ok) throw new ApiError("Failed to load vitals", r.status);
+  return r.json();
+}
+
 export async function postVitalsSimulate(pid: string): Promise<void> {
   const form = new FormData();
   form.append("pid", pid);
