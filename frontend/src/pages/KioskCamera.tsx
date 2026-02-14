@@ -195,11 +195,11 @@ export function KioskCamera() {
   return (
     <>
       <Topbar />
-      <main className="mx-auto max-w-4xl space-y-4 px-4 py-4">
+      <main className="mx-auto flex max-w-4xl flex-col items-center space-y-4 px-4 py-4">
         {/* Small top bar: code entry + status */}
-        <div className="flex flex-wrap items-center gap-3 rounded-lg border border-border bg-muted/30 px-4 py-3">
+        <div className="flex w-full max-w-2xl flex-wrap items-center justify-center gap-3 rounded-lg border border-border bg-muted/30 px-4 py-3">
           <form
-            className="flex flex-1 min-w-0 items-center gap-2 sm:flex-initial"
+            className="flex items-center gap-2"
             onSubmit={(e) => {
               e.preventDefault();
               submitCode(manualCode, false);
@@ -221,8 +221,8 @@ export function KioskCamera() {
         </div>
 
         {/* Largest: QR camera */}
-        <Card>
-          <CardContent className="p-0">
+        <Card className="w-full max-w-2xl">
+          <CardContent className="p-0 flex justify-center">
             <img
               src="/camera/stream"
               alt="Point QR code at camera"
@@ -237,7 +237,7 @@ export function KioskCamera() {
           <motion.div
             initial={{ opacity: 0 }}
             animate={{ opacity: 1 }}
-            className="space-y-4"
+            className="w-full max-w-2xl space-y-4 text-center"
           >
             <div className="rounded-lg border-l-4 border-green-600 bg-green-50 p-4 dark:bg-green-950">
               <p className="text-lg font-bold text-green-900 dark:text-green-100">✓ You're checked in</p>
@@ -251,16 +251,18 @@ export function KioskCamera() {
               </Button>
             </div>
 
-            <VitalsForm token={successCard.token} />
+            <div className="flex justify-center">
+              <VitalsForm token={successCard.token} />
+            </div>
 
-            <Card>
+            <Card className="text-center">
               <CardHeader>
                 <CardTitle className="text-base">Voice assistant — your wait time & questions</CardTitle>
                 <CardContent className="pt-0">
                   <p className="text-muted-foreground text-xs">
                     Ask about your wait time or anything else. If emergency symptoms, alert staff immediately.
                   </p>
-                  <div className="mt-3 flex flex-wrap items-center gap-2">
+                  <div className="mt-3 flex flex-wrap items-center justify-center gap-2">
                     <Button type="button" onClick={startListening} disabled={voiceState === "listening"}>
                       <Mic className="mr-2 h-4 w-4" />
                       {voiceState === "listening" ? "Listening…" : "Ask a question"}
