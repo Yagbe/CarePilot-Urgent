@@ -32,6 +32,9 @@ from fastapi.staticfiles import StaticFiles
 from jinja2 import Environment, FileSystemLoader
 from starlette.middleware.httpsredirect import HTTPSRedirectMiddleware
 from starlette.middleware.trustedhost import TrustedHostMiddleware
+from dotenv import load_dotenv
+
+load_dotenv()
 
 # -----------------------------------------------------------------------------
 # JSON API request models (for React / Best UI/UX stack)
