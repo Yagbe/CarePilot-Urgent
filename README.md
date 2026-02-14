@@ -38,6 +38,7 @@ Dedicated station URLs for multi-computer tests:
 - `GET /kiosk-station` -> Kiosk computer
 - `GET /waiting-room-station` -> Waiting room display computer/TV
 - `GET /staff-station` -> Staff computer (redirects to staff login)
+- `GET /kiosk/camera` -> Jetson USB-camera QR kiosk mode
 
 ### 4-computer live test setup
 
@@ -76,6 +77,9 @@ Key variables:
 - `APP_SECRET_KEY=<long-random-secret>`
 - `STAFF_ACCESS_PASSWORD=<staff-password>`
 - `STAFF_SESSION_TTL_MINUTES=480`
+- `CAMERA_INDEX=0`
+- `CAM_W=1280`
+- `CAM_H=720`
 
 ---
 
@@ -86,6 +90,9 @@ Key variables:
 - `GET /api/ping` -> app status/version/env
 - `GET /api/queue` -> public queue (privacy-safe)
 - `GET /api/staff-queue` -> staff queue (protected)
+- `GET /camera/stream` -> MJPEG camera stream for camera kiosk
+- `GET /api/camera/last-scan` -> latest QR text + freshness
+- `POST /api/kiosk-checkin` -> shared kiosk check-in API
 
 ---
 
@@ -139,3 +146,13 @@ Then open a Pull Request into `main`.
 This app currently uses in-memory storage for hackathon speed.
 - Run a **single app instance** in production-like demos.
 - For true multi-instance production, move state to shared storage (DB/cache).
+
+### Jetson Nano camera notes
+
+- Verify camera:
+  - `ls /dev/video*`
+  - `v4l2-ctl --list-devices`
+- Quick OpenCV test:
+  - `python3 -c "import cv2; c=cv2.VideoCapture(0); ok,f=c.read(); print(ok, None if f is None else f.shape); c.release()"`
+- If pip OpenCV is difficult on Jetson, install OS package:
+  - `sudo apt-get install python3-opencv`

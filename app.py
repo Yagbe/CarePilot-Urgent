@@ -12,6 +12,7 @@ import hmac
 import os
 import random
 import re
+import threading
 import time
 import uuid
 from datetime import datetime, timedelta
@@ -21,7 +22,7 @@ from typing import Any, Optional
 import qrcode
 from fastapi import FastAPI, Form, HTTPException, Request
 from fastapi.middleware.gzip import GZipMiddleware
-from fastapi.responses import HTMLResponse, RedirectResponse, Response
+from fastapi.responses import HTMLResponse, RedirectResponse, Response, StreamingResponse
 from fastapi.staticfiles import StaticFiles
 from jinja2 import Environment, FileSystemLoader
 from starlette.middleware.httpsredirect import HTTPSRedirectMiddleware
@@ -41,6 +42,9 @@ APP_SECRET_KEY = os.getenv("APP_SECRET_KEY", "dev-only-change-me")
 STAFF_ACCESS_PASSWORD = os.getenv("STAFF_ACCESS_PASSWORD", "1234")
 STAFF_SESSION_TTL_MINUTES = int(os.getenv("STAFF_SESSION_TTL_MINUTES", "480"))
 STAFF_SESSION_COOKIE = "carepilot_staff_session"
+CAMERA_INDEX = int(os.getenv("CAMERA_INDEX", "0"))
+CAM_W = int(os.getenv("CAM_W", "1280"))
+CAM_H = int(os.getenv("CAM_H", "720"))
 patients: dict[str, dict[str, Any]] = {}
 queue_order: list[str] = []
 provider_count = 1
@@ -63,6 +67,118 @@ if FORCE_HTTPS:
     app.add_middleware(HTTPSRedirectMiddleware)
 app.mount("/static", StaticFiles(directory=str(_STATIC_DIR)), name="static")
 env = Environment(loader=FileSystemLoader(str(_TEMPLATES_DIR)))
+
+try:
+    import cv2  # type: ignore
+except Exception:
+    cv2 = None
+
+
+class CameraManager:
+    def __init__(self, index: int, width: int, height: int) -> None:
+        self.index = index
+        self.width = width
+        self.height = height
+        self._cap = None
+        self._thread: Optional[threading.Thread] = None
+        self._running = False
+        self._lock = threading.Lock()
+        self._latest_jpeg: bytes = b""
+        self._last_scan_value = ""
+        self._last_scan_ts = 0.0
+        self._last_emitted_value = ""
+        self._last_emitted_ts = 0.0
+        self._detector = cv2.QRCodeDetector() if cv2 is not None else None
+
+    def start(self) -> None:
+        if cv2 is None:
+            raise RuntimeError("OpenCV is not available.")
+        if self._running:
+            return
+        cap = cv2.VideoCapture(self.index)
+        if not cap.isOpened():
+            raise RuntimeError(f"Unable to open camera index {self.index}.")
+        cap.set(cv2.CAP_PROP_FRAME_WIDTH, self.width)
+        cap.set(cv2.CAP_PROP_FRAME_HEIGHT, self.height)
+        self._cap = cap
+        self._running = True
+        self._thread = threading.Thread(target=self._loop, daemon=True)
+        self._thread.start()
+
+    def stop(self) -> None:
+        self._running = False
+        if self._thread and self._thread.is_alive():
+            self._thread.join(timeout=1.0)
+        if self._cap is not None:
+            self._cap.release()
+            self._cap = None
+
+    def _loop(self) -> None:
+        while self._running:
+            if self._cap is None:
+                time.sleep(0.05)
+                continue
+            ok, frame = self._cap.read()
+            if not ok or frame is None:
+                time.sleep(0.03)
+                continue
+
+            decoded = ""
+            points = None
+            if self._detector is not None:
+                decoded, points, _ = self._detector.detectAndDecode(frame)
+
+            now = time.time()
+            if points is not None and len(points) > 0:
+                pts = points.astype(int)
+                cv2.polylines(frame, [pts], isClosed=True, color=(40, 220, 120), thickness=3)
+                cv2.putText(
+                    frame,
+                    "QR detected",
+                    (20, 42),
+                    cv2.FONT_HERSHEY_SIMPLEX,
+                    1.0,
+                    (40, 220, 120),
+                    2,
+                    cv2.LINE_AA,
+                )
+
+            value = (decoded or "").strip()
+            if value:
+                with self._lock:
+                    is_new = value != self._last_emitted_value
+                    stale = (now - self._last_emitted_ts) > 3.0
+                    if is_new or stale:
+                        self._last_scan_value = value
+                        self._last_scan_ts = now
+                        self._last_emitted_value = value
+                        self._last_emitted_ts = now
+
+            ok_jpg, jpg = cv2.imencode(".jpg", frame, [int(cv2.IMWRITE_JPEG_QUALITY), 82])
+            if ok_jpg:
+                with self._lock:
+                    self._latest_jpeg = jpg.tobytes()
+            time.sleep(0.02)
+
+    def latest_jpeg(self) -> bytes:
+        with self._lock:
+            return self._latest_jpeg
+
+    def last_scan(self) -> tuple[str, float]:
+        with self._lock:
+            return self._last_scan_value, self._last_scan_ts
+
+
+camera_manager: Optional[CameraManager] = None
+
+
+def _camera() -> CameraManager:
+    global camera_manager
+    if camera_manager is None:
+        camera_manager = CameraManager(CAMERA_INDEX, CAM_W, CAM_H)
+    if not camera_manager._running:
+        camera_manager.start()
+    return camera_manager
 
 
 def render(name: str, **kwargs: Any) -> str:
@@ -379,6 +495,37 @@ def _wait_for_pid(pid: str) -> int:
     return waits.get(pid, 0)
 
 
+def _kiosk_checkin_result(code: str) -> dict[str, Any]:
+    pid = _resolve_code(code)
+    if not pid:
+        return {"ok": False, "checked_in": False, "message": "Code not found.", "token": "", "estimated_wait_min": 0}
+
+    p = patients[pid]
+    if p.get("status") != "pending":
+        wait = _wait_for_pid(pid)
+        return {
+            "ok": True,
+            "checked_in": True,
+            "message": "Already checked in.",
+            "token": p["token"],
+            "estimated_wait_min": wait,
+        }
+
+    p["status"] = "waiting"
+    p["checked_in_at"] = datetime.utcnow().isoformat()
+    if pid not in queue_order:
+        queue_order.append(pid)
+
+    wait = _wait_for_pid(pid)
+    return {
+        "ok": True,
+        "checked_in": True,
+        "message": "You are checked in.",
+        "token": p["token"],
+        "estimated_wait_min": wait,
+    }
+
+
 def _session_signature(expires_ts: int) -> str:
     msg = f"staff:{expires_ts}".encode("utf-8")
     return hmac.new(APP_SECRET_KEY.encode("utf-8"), msg, hashlib.sha256).hexdigest()
@@ -542,36 +689,55 @@ def kiosk_page():
 @app.post("/kiosk", response_class=HTMLResponse)
 @app.post("/kiosk/", response_class=HTMLResponse)
 def kiosk_checkin(code: str = Form("")):
-    pid = _resolve_code(code)
-    if not pid:
-        return render("kiosk.html", page="kiosk", checked_in=False, message="Code not found.", token="", estimated_wait_min=0)
-
-    p = patients[pid]
-    if p.get("status") != "pending":
-        wait = _wait_for_pid(pid)
-        return render(
-            "kiosk.html",
-            page="kiosk",
-            checked_in=True,
-            message="Already checked in.",
-            token=p["token"],
-            estimated_wait_min=wait,
-        )
-
-    p["status"] = "waiting"
-    p["checked_in_at"] = datetime.utcnow().isoformat()
-    if pid not in queue_order:
-        queue_order.append(pid)
-
-    wait = _wait_for_pid(pid)
+    result = _kiosk_checkin_result(code)
     return render(
         "kiosk.html",
         page="kiosk",
-        checked_in=True,
-        message="You are checked in.",
-        token=p["token"],
-        estimated_wait_min=wait,
+        checked_in=result["checked_in"],
+        message=result["message"],
+        token=result["token"],
+        estimated_wait_min=result["estimated_wait_min"],
     )
+
+
+@app.get("/kiosk/camera", response_class=HTMLResponse)
+@app.get("/kiosk/camera/", response_class=HTMLResponse)
+def kiosk_camera_page():
+    return render("kiosk_camera.html", page="kiosk_camera")
+
+
+@app.get("/camera/stream")
+def camera_stream():
+    try:
+        manager = _camera()
+    except Exception as ex:
+        raise HTTPException(503, f"Camera unavailable: {ex}")
+
+    def frame_generator():
+        while True:
+            frame = manager.latest_jpeg()
+            if frame:
+                yield b"--frame\r\nContent-Type: image/jpeg\r\n\r\n" + frame + b"\r\n"
+            time.sleep(0.04)
+
+    return StreamingResponse(frame_generator(), media_type="multipart/x-mixed-replace; boundary=frame")
+
+
+@app.get("/api/camera/last-scan")
+def api_camera_last_scan():
+    try:
+        manager = _camera()
+    except Exception as ex:
+        raise HTTPException(503, f"Camera unavailable: {ex}")
+    value, ts = manager.last_scan()
+    now = time.time()
+    fresh = bool(value) and (now - ts) <= 2.0
+    return {"value": value, "ts": ts, "fresh": fresh}
+
+
+@app.post("/api/kiosk-checkin")
+def api_kiosk_checkin(code: str = Form("")):
+    return _kiosk_checkin_result(code)
 
 
 @app.get("/display", response_class=HTMLResponse)
@@ -683,6 +849,14 @@ def staff_logout():
     response = RedirectResponse("/staff/login", status_code=302)
     response.delete_cookie(STAFF_SESSION_COOKIE)
     return response
+
+
+@app.on_event("shutdown")
+def shutdown_camera_manager():
+    global camera_manager
+    if camera_manager is not None:
+        camera_manager.stop()
+        camera_manager = None
 
 
 if __name__ == "__main__":

@@ -1,0 +1,166 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>CarePilot Urgent - Camera Kiosk</title>
+  <link rel="stylesheet" href="/static/style.css">
+</head>
+<body>
+  <header class="topbar">
+    <div class="topbar-inner">
+      <div class="brand-wrap">
+        <div class="brand">CarePilot Urgent</div>
+        {% if demo_mode %}<span class="demo-badge">DEMO MODE</span>{% endif %}
+      </div>
+      <nav class="nav">
+        <a href="/">Portal</a>
+        <a href="/kiosk">Manual Kiosk</a>
+        <a class="active" href="/kiosk/camera">Camera Kiosk</a>
+        <a href="/display">Display</a>
+      </nav>
+    </div>
+  </header>
+
+  <main class="container">
+    <div class="card">
+      <h1 class="title">Camera QR Check-in</h1>
+      <p class="muted">Point the patient's QR code at the USB camera. This station shows token and wait only.</p>
+      <div id="status-box" class="card" style="border-left:4px solid var(--primary); margin-top:.8rem;">
+        <strong id="status-text">Scanning for QR...</strong>
+      </div>
+    </div>
+
+    <div class="grid two" style="margin-top:1rem;">
+      <div class="card">
+        <img id="camera-feed" src="/camera/stream" alt="Live camera stream" style="width:100%; border-radius:12px; border:1px solid var(--border);">
+      </div>
+      <div class="card">
+        <h3 class="title">Last Check-in</h3>
+        <div id="success-card" class="card" style="display:none; border-left:4px solid var(--ok);">
+          <div class="token-card" id="token-out">UC-0000</div>
+          <p class="muted" id="message-out">Checked in.</p>
+          <p class="muted">Estimated wait: <strong id="wait-out">0</strong> min</p>
+        </div>
+
+        <div class="btn-row" style="margin-top:.7rem;">
+          <button class="btn secondary" type="button" id="resume-btn">Resume scanning</button>
+        </div>
+
+        <hr class="hr">
+        <h3 class="title">Manual Fallback</h3>
+        <form id="manual-form">
+          <label for="manual-code">Token / code</label>
+          <input id="manual-code" type="text" placeholder="UC-1234 or A1B2C3D4" required>
+          <button class="btn ok" type="submit">Check In</button>
+        </form>
+      </div>
+    </div>
+  </main>
+
+  <script>
+    (function () {
+      const statusText = document.getElementById('status-text');
+      const successCard = document.getElementById('success-card');
+      const tokenOut = document.getElementById('token-out');
+      const waitOut = document.getElementById('wait-out');
+      const messageOut = document.getElementById('message-out');
+      const manualForm = document.getElementById('manual-form');
+      const manualCode = document.getElementById('manual-code');
+      const resumeBtn = document.getElementById('resume-btn');
+
+      let scanningEnabled = true;
+      let submitting = false;
+      let cooldownUntil = 0;
+      let lastTsHandled = 0;
+
+      function setStatus(msg) {
+        statusText.textContent = msg;
+      }
+
+      function beep() {
+        const Ctx = window.AudioContext || window.webkitAudioContext;
+        if (!Ctx) return;
+        const ctx = new Ctx();
+        const osc = ctx.createOscillator();
+        const gain = ctx.createGain();
+        osc.type = 'sine';
+        osc.frequency.value = 880;
+        gain.gain.value = 0.0001;
+        osc.connect(gain);
+        gain.connect(ctx.destination);
+        osc.start();
+        gain.gain.exponentialRampToValueAtTime(0.22, ctx.currentTime + 0.01);
+        gain.gain.exponentialRampToValueAtTime(0.0001, ctx.currentTime + 0.22);
+        osc.stop(ctx.currentTime + 0.24);
+      }
+
+      function showSuccess(data) {
+        tokenOut.textContent = data.token || 'UC-0000';
+        waitOut.textContent = String(data.estimated_wait_min || 0);
+        messageOut.textContent = data.message || 'Checked in.';
+        successCard.style.display = 'block';
+        beep();
+      }
+
+      async function submitCode(code, fromCamera) {
+        if (!code || submitting) return;
+        submitting = true;
+        setStatus(fromCamera ? 'QR detected, checking in...' : 'Checking in...');
+        try {
+          const fd = new FormData();
+          fd.append('code', code);
+          const r = await fetch('/api/kiosk-checkin', { method: 'POST', body: fd });
+          const data = await r.json();
+          if (data.ok && data.checked_in) {
+            showSuccess(data);
+            scanningEnabled = false;
+            cooldownUntil = Date.now() + 5000;
+            setStatus('Checked in. Scan paused for 5 seconds...');
+            setTimeout(function () {
+              scanningEnabled = true;
+              setStatus('Scanning for QR...');
+            }, 5000);
+          } else {
+            setStatus(data.message || 'Code not found.');
+          }
+        } catch (err) {
+          setStatus('Camera check-in error. Use manual fallback.');
+        } finally {
+          submitting = false;
+        }
+      }
+
+      async function pollLastScan() {
+        if (!scanningEnabled || submitting || Date.now() < cooldownUntil) return;
+        try {
+          const r = await fetch('/api/camera/last-scan');
+          if (!r.ok) return;
+          const data = await r.json();
+          if (data.fresh && data.value && data.ts && data.ts !== lastTsHandled) {
+            lastTsHandled = data.ts;
+            await submitCode(String(data.value), true);
+          }
+        } catch (err) {
+          setStatus('Camera unavailable. Use manual fallback.');
+        }
+      }
+
+      manualForm.addEventListener('submit', function (e) {
+        e.preventDefault();
+        const code = (manualCode.value || '').trim();
+        submitCode(code, false);
+      });
+
+      resumeBtn.addEventListener('click', function () {
+        scanningEnabled = true;
+        cooldownUntil = 0;
+        setStatus('Scanning for QR...');
+      });
+
+      setInterval(pollLastScan, 250);
+      setStatus('Scanning for QR...');
+    })();
+  </script>
+</body>
+</html>
