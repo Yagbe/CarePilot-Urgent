@@ -122,6 +122,7 @@ OPENAI_API_KEY = os.getenv("OPENAI_API_KEY", "").strip()
 # Gemini: key must be set in .env as GEMINI_API_KEY (no hardcoded keys)
 GEMINI_API_KEY = os.getenv("GEMINI_API_KEY", "").strip()
 GEMINI_MODEL = os.getenv("GEMINI_MODEL", "gemini-2.5-flash").strip() or "gemini-2.5-flash"
+OPENAI_MODEL = os.getenv("OPENAI_MODEL", "gpt-4o-mini").strip() or "gpt-4o-mini"
 # Optional: when set, kiosk will POST check-in token here (sensor bridge / token receiver). Leave unset to avoid localhost:9999 requests.
 SENSOR_BRIDGE_URL = (os.getenv("SENSOR_BRIDGE_URL", "").strip() or "").rstrip("/")
 patients: dict[str, dict[str, Any]] = {}
@@ -1144,6 +1145,52 @@ def _gemini_generate(system_instruction: str, user_text: str) -> Optional[str]:
     return None
 
 
+def _openai_generate(system_instruction: str, user_text: str) -> Optional[str]:
+    """Call OpenAI Chat Completions API. Returns generated text or None on error."""
+    if not OPENAI_API_KEY:
+        return None
+    url = "https://api.openai.com/v1/chat/completions"
+    payload = {
+        "model": OPENAI_MODEL,
+        "messages": [
+            {"role": "system", "content": system_instruction},
+            {"role": "user", "content": user_text},
+        ],
+        "max_tokens": 256,
+        "temperature": 0.3,
+    }
+    try:
+        data = json.dumps(payload).encode("utf-8")
+        req = urllib.request.Request(
+            url,
+            data=data,
+            headers={
+                "Content-Type": "application/json",
+                "Authorization": f"Bearer {OPENAI_API_KEY}",
+            },
+            method="POST",
+        )
+        with urllib.request.urlopen(req, timeout=25) as resp:
+            out = json.loads(resp.read().decode("utf-8"))
+        choices = out.get("choices") or []
+        if not choices:
+            return None
+        msg = choices[0].get("message") or {}
+        text = msg.get("content") or ""
+        return text.strip() if isinstance(text, str) else None
+    except urllib.error.HTTPError as e:
+        body = ""
+        try:
+            body = e.read().decode("utf-8") if e.fp else ""
+        except Exception:
+            pass
+        print(f"[CarePilot] OpenAI [{OPENAI_MODEL}] HTTP {e.code}: {body[:300]}", flush=True)
+        return None
+    except Exception as e:
+        print(f"[CarePilot] OpenAI [{OPENAI_MODEL}] failed: {e}", flush=True)
+        return None
+
+
 AI_CHAT_SYSTEM_PROMPT = """You are CarePilot, an AI medical kiosk assistant at an urgent care clinic. You are friendly and helpful but strictly non-diagnostic.
 
 Rules:
@@ -1156,7 +1203,7 @@ Rules:
 
 
 def _ai_chat_reply(user_text: str) -> dict[str, Any]:
-    """Chat replies come only from Google Gemini. Red-flag phrases get a fixed safety message."""
+    """Chat replies from OpenAI or Gemini per AI_PROVIDER. Red-flag phrases get a fixed safety message."""
     text = (user_text or "").strip()
     low = text.lower()
     red_flags = [f for f in RED_FLAG_KEYWORDS if f in low]
@@ -1166,8 +1213,30 @@ def _ai_chat_reply(user_text: str) -> dict[str, Any]:
             "Please alert clinic staff now for immediate support."
         )
         return {"reply": reply, "red_flags": red_flags}
+
+    if AI_PROVIDER == "openai":
+        # #region agent log
+        _agent_log("chat_reply: check key", {"provider": "openai", "key_set": bool(OPENAI_API_KEY), "key_len": len(OPENAI_API_KEY)}, "A")
+        # #endregion
+        if not OPENAI_API_KEY:
+            return {
+                "reply": "The AI assistant is not configured (missing OPENAI_API_KEY). Please ask a staff member.",
+                "red_flags": [],
+            }
+        openai_reply = _openai_generate(AI_CHAT_SYSTEM_PROMPT, text)
+        # #region agent log
+        _agent_log("chat_reply: after openai", {"got_reply": bool(openai_reply), "reply_len": len(openai_reply) if openai_reply else 0}, "E")
+        # #endregion
+        if openai_reply:
+            return {"reply": openai_reply, "red_flags": []}
+        return {
+            "reply": "The AI assistant is temporarily unavailable. Please try again in a moment or ask a staff member.",
+            "red_flags": [],
+        }
+
+    # Gemini (default)
     # #region agent log
-    _agent_log("chat_reply: check key", {"key_set": bool(GEMINI_API_KEY), "key_len": len(GEMINI_API_KEY)}, "A")
+    _agent_log("chat_reply: check key", {"provider": "gemini", "key_set": bool(GEMINI_API_KEY), "key_len": len(GEMINI_API_KEY)}, "A")
     # #endregion
     if not GEMINI_API_KEY:
         return {
@@ -1723,20 +1792,59 @@ def api_ai_chat(request: Request, pid: str = Form(""), message: str = Form(""), 
 
 @app.get("/api/ai/status")
 def api_ai_status():
-    """Diagnostic: see what the deployed app sees for Gemini (no secrets). Compare local vs production."""
+    """Diagnostic: see what the deployed app sees for AI (no secrets). Compare local vs production."""
     return {
-        "key_set": bool(GEMINI_API_KEY),
-        "key_len": len(GEMINI_API_KEY),
-        "gemini_model": GEMINI_MODEL,
+        "provider": AI_PROVIDER,
         "env": APP_ENV,
+        "gemini_key_set": bool(GEMINI_API_KEY),
+        "gemini_key_len": len(GEMINI_API_KEY),
+        "gemini_model": GEMINI_MODEL,
+        "openai_key_set": bool(OPENAI_API_KEY),
+        "openai_key_len": len(OPENAI_API_KEY),
+        "openai_model": OPENAI_MODEL,
     }
 
 
 @app.get("/api/ai/probe")
 def api_ai_probe():
-    """Run one Gemini call and return success or sanitized error (for debugging production). No secrets."""
+    """Run one AI call with current provider and return success or sanitized error (for debugging production). No secrets."""
+    if AI_PROVIDER == "openai":
+        if not OPENAI_API_KEY:
+            return {"ok": False, "provider": "openai", "error": "key_not_set"}
+        url = "https://api.openai.com/v1/chat/completions"
+        payload = {
+            "model": OPENAI_MODEL,
+            "messages": [{"role": "user", "content": "Say only: OK"}],
+            "max_tokens": 5,
+        }
+        try:
+            data = json.dumps(payload).encode("utf-8")
+            req = urllib.request.Request(
+                url,
+                data=data,
+                headers={"Content-Type": "application/json", "Authorization": f"Bearer {OPENAI_API_KEY}"},
+                method="POST",
+            )
+            with urllib.request.urlopen(req, timeout=15) as resp:
+                out = json.loads(resp.read().decode("utf-8"))
+            if out.get("error"):
+                return {"ok": False, "provider": "openai", "error": "api_error", "detail": str(out["error"])[:200]}
+            choices = out.get("choices") or []
+            if not choices:
+                return {"ok": False, "provider": "openai", "error": "no_choices", "keys": list(out.keys())}
+            return {"ok": True, "provider": "openai", "model": OPENAI_MODEL}
+        except urllib.error.HTTPError as e:
+            body = ""
+            try:
+                body = e.read().decode("utf-8") if e.fp else ""
+            except Exception:
+                pass
+            return {"ok": False, "provider": "openai", "error": f"http_{e.code}", "detail": body[:300]}
+        except Exception as e:
+            return {"ok": False, "provider": "openai", "error": type(e).__name__, "detail": str(e)[:200]}
+    # Gemini
     if not GEMINI_API_KEY:
-        return {"ok": False, "error": "key_not_set"}
+        return {"ok": False, "provider": "gemini", "error": "key_not_set"}
     model = GEMINI_MODEL or "gemini-2.5-flash"
     url = f"https://generativelanguage.googleapis.com/v1beta/models/{model}:generateContent?key={GEMINI_API_KEY}"
     payload = {
@@ -1751,22 +1859,22 @@ def api_ai_probe():
         with urllib.request.urlopen(req, timeout=15) as resp:
             out = json.loads(resp.read().decode("utf-8"))
         if out.get("error"):
-            return {"ok": False, "error": "api_error", "detail": str(out["error"])[:200]}
+            return {"ok": False, "provider": "gemini", "error": "api_error", "detail": str(out["error"])[:200]}
         cand = out.get("candidates") or []
         if not cand:
-            return {"ok": False, "error": "no_candidates", "keys": list(out.keys())}
-        return {"ok": True, "model": model}
+            return {"ok": False, "provider": "gemini", "error": "no_candidates", "keys": list(out.keys())}
+        return {"ok": True, "provider": "gemini", "model": model}
     except urllib.error.HTTPError as e:
         body = ""
         try:
             body = e.read().decode("utf-8") if e.fp else ""
         except Exception:
             pass
-        return {"ok": False, "error": f"http_{e.code}", "detail": body[:300]}
+        return {"ok": False, "provider": "gemini", "error": f"http_{e.code}", "detail": body[:300]}
     except urllib.error.URLError as e:
-        return {"ok": False, "error": "network", "detail": str(e.reason)[:200]}
+        return {"ok": False, "provider": "gemini", "error": "network", "detail": str(e.reason)[:200]}
     except Exception as e:
-        return {"ok": False, "error": type(e).__name__, "detail": str(e)[:200]}
+        return {"ok": False, "provider": "gemini", "error": type(e).__name__, "detail": str(e)[:200]}
 
 
 @app.get("/api/lobby-load")
