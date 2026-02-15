@@ -19,6 +19,8 @@ function App() {
         <Route path="/qr/:pid" element={<QR />} />
         <Route path="/kiosk-station" element={<KioskCamera />} />
         <Route path="/kiosk-station/camera" element={<Navigate to="/kiosk-station" replace />} />
+        <Route path="/kiosk" element={<Navigate to="/kiosk-station" replace />} />
+        <Route path="/kiosk/camera" element={<Navigate to="/kiosk-station" replace />} />
         <Route path="/waiting-room-station" element={<Navigate to="/display" replace />} />
         <Route path="/display" element={<Display />} />
         <Route path="/staff-station" element={<Navigate to="/staff" replace />} />

@@ -1917,7 +1917,7 @@ if _SPA_BUILD:
             raise HTTPException(404, "Not Found")
         if any(path.startswith(p) for p in ("camera", "qr-img/")):
             raise HTTPException(404, "Not Found")
-        if path in ("", "intake", "patient-station", "kiosk-station", "display", "waiting-room-station", "staff", "analytics", "privacy") or path.startswith("staff/") or path.startswith("kiosk-station/") or path.startswith("qr/"):
+        if path in ("", "intake", "patient-station", "kiosk-station", "kiosk", "display", "waiting-room-station", "staff", "analytics", "privacy") or path.startswith("staff/") or path.startswith("kiosk-station/") or path.startswith("kiosk/") or path.startswith("qr/"):
             if "text/html" in (request.headers.get("accept") or ""):
                 return FileResponse(_SPA_INDEX, media_type="text/html")
         raise HTTPException(404, "Not Found")
