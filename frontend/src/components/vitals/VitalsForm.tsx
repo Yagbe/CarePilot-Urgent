@@ -68,27 +68,38 @@ export function VitalsForm({ token, onSuccess }: Props) {
           <Activity className="h-5 w-5" />
           Record your vitals
         </CardTitle>
-        <CardDescription>Optional. These are shared live with your care team.</CardDescription>
+        <CardDescription>Use the provided sensors for blood pressure, pulse, and body temperature, then enter the readings below. Shared live with your care team.</CardDescription>
       </CardHeader>
       <CardContent>
         <form onSubmit={submit} className="space-y-3">
           {error && <p className="text-destructive text-sm">{error}</p>}
           <div className="grid grid-cols-2 gap-3 sm:grid-cols-3">
             <div>
-              <Label htmlFor="vitals-spo2">SpO2 (%)</Label>
+              <Label htmlFor="vitals-bp-sys">Blood pressure — systolic</Label>
               <Input
-                id="vitals-spo2"
+                id="vitals-bp-sys"
                 type="number"
-                min={80}
-                max={100}
-                step={1}
-                placeholder="e.g. 98"
-                value={vitals.spo2 ?? ""}
-                onChange={(e) => setVitals((v) => ({ ...v, spo2: e.target.value ? Number(e.target.value) : undefined }))}
+                min={70}
+                max={200}
+                placeholder="e.g. 120"
+                value={vitals.bp_sys ?? ""}
+                onChange={(e) => setVitals((v) => ({ ...v, bp_sys: e.target.value ? Number(e.target.value) : undefined }))}
               />
             </div>
             <div>
-              <Label htmlFor="vitals-hr">Heart rate (bpm)</Label>
+              <Label htmlFor="vitals-bp-dia">Blood pressure — diastolic</Label>
+              <Input
+                id="vitals-bp-dia"
+                type="number"
+                min={40}
+                max={120}
+                placeholder="e.g. 80"
+                value={vitals.bp_dia ?? ""}
+                onChange={(e) => setVitals((v) => ({ ...v, bp_dia: e.target.value ? Number(e.target.value) : undefined }))}
+              />
+            </div>
+            <div>
+              <Label htmlFor="vitals-hr">Pulse (bpm)</Label>
               <Input
                 id="vitals-hr"
                 type="number"
@@ -101,7 +112,7 @@ export function VitalsForm({ token, onSuccess }: Props) {
               />
             </div>
             <div>
-              <Label htmlFor="vitals-temp">Temp (°C)</Label>
+              <Label htmlFor="vitals-temp">Body temp (°C)</Label>
               <Input
                 id="vitals-temp"
                 type="number"
@@ -113,28 +124,17 @@ export function VitalsForm({ token, onSuccess }: Props) {
                 onChange={(e) => setVitals((v) => ({ ...v, temp_c: e.target.value ? Number(e.target.value) : undefined }))}
               />
             </div>
-            <div>
-              <Label htmlFor="vitals-bp-sys">BP sys</Label>
+            <div className="sm:col-span-2">
+              <Label htmlFor="vitals-spo2" className="text-muted-foreground">SpO2 (%) — optional, if available</Label>
               <Input
-                id="vitals-bp-sys"
+                id="vitals-spo2"
                 type="number"
-                min={70}
-                max={200}
-                placeholder="e.g. 120"
-                value={vitals.bp_sys ?? ""}
-                onChange={(e) => setVitals((v) => ({ ...v, bp_sys: e.target.value ? Number(e.target.value) : undefined }))}
-              />
-            </div>
-            <div>
-              <Label htmlFor="vitals-bp-dia">BP dia</Label>
-              <Input
-                id="vitals-bp-dia"
-                type="number"
-                min={40}
-                max={120}
-                placeholder="e.g. 80"
-                value={vitals.bp_dia ?? ""}
-                onChange={(e) => setVitals((v) => ({ ...v, bp_dia: e.target.value ? Number(e.target.value) : undefined }))}
+                min={80}
+                max={100}
+                step={1}
+                placeholder="e.g. 98"
+                value={vitals.spo2 ?? ""}
+                onChange={(e) => setVitals((v) => ({ ...v, spo2: e.target.value ? Number(e.target.value) : undefined }))}
               />
             </div>
           </div>

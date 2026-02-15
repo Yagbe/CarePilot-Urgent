@@ -1203,7 +1203,7 @@ Rules:
 - Only help with: check-in steps, wait times, wayfinding (e.g. waiting room, restroom), sensor/vitals instructions, and general workflow questions.
 - Do not give medical advice, diagnose, or interpret symptoms. If someone describes serious symptoms (chest pain, difficulty breathing, etc.), tell them to alert clinic staff immediately.
 - Keep replies short (1–3 sentences). Speak as if to a patient at a kiosk.
-- For wait time: say you don't have real-time wait data and they can check the screen or ask staff.
+- For wait time: when patient/wait context is provided below, use it to answer (e.g. "Your estimated wait is about X minutes. You're number N in line."). Add that they can check the waiting room screen or ask staff for the most up-to-date info. If no wait context is provided, say you don't have their wait data and they can check the screen or ask staff.
 - For language/translation: say the kiosk can support multiple languages and they can choose on screen.
 - When the patient asks for THEIR vitals or "what are my numbers": if vitals are provided below, read them back in a friendly sentence (e.g. "Your latest readings are ..."). Do not interpret or diagnose. If no vitals are provided below, say to place one finger on the sensor and hold still until they see confirmation.
 - For general sensor instructions (when they're not asking for their own readings): say to place one finger on the sensor and hold still until they see confirmation."""
@@ -1227,7 +1227,39 @@ def _format_vitals_context(v: Optional[dict[str, Any]]) -> str:
     return "Latest vitals: " + ", ".join(parts) + ". Use only to read back if the patient asks; do not interpret or diagnose."
 
 
-def _ai_chat_reply(user_text: str, vitals_context: Optional[str] = None) -> dict[str, Any]:
+def _format_patient_wait_context(pid: str) -> Optional[str]:
+    """Build context for this patient: wait time, position, priority, status. For AI chat so it can answer wait questions."""
+    if not pid:
+        return None
+    items = _public_queue_items()
+    with STATE_LOCK:
+        p = patients.get(pid)
+        if not p:
+            return None
+        token = p.get("token", "")
+    for item in items:
+        if str(item.get("token", "")).upper() == str(token or "").upper():
+            wait = item.get("estimated_wait_min", 0)
+            pos = item.get("position_in_line")
+            priority = item.get("priority", "low")
+            status = item.get("status_label", "Waiting")
+            parts = [f"Estimated wait for this patient: {int(wait)} minutes"]
+            if pos is not None:
+                parts.append(f"position in line: {pos}")
+            parts.append(f"priority: {priority}")
+            parts.append(f"status: {status}")
+            return ". ".join(parts) + ". Use this to answer wait time and queue questions; also suggest they check the waiting room screen or ask staff for the most up-to-date info."
+    with STATE_LOCK:
+        p = patients.get(pid)
+        if not p:
+            return None
+        wait = p.get("estimated_wait_min")
+    if wait is not None:
+        return f"Estimated wait for this patient: {int(wait)} minutes. They may not be in the active queue yet. Use this to answer wait questions; also suggest checking the screen or asking staff."
+    return None
+
+
+def _ai_chat_reply(user_text: str, vitals_context: Optional[str] = None, patient_wait_context: Optional[str] = None) -> dict[str, Any]:
     """Chat replies from OpenAI or Gemini per AI_PROVIDER. Red-flag phrases get a fixed safety message."""
     text = (user_text or "").strip()
     low = text.lower()
@@ -1240,6 +1272,8 @@ def _ai_chat_reply(user_text: str, vitals_context: Optional[str] = None) -> dict
         return {"reply": reply, "red_flags": red_flags}
 
     system_prompt = AI_CHAT_SYSTEM_PROMPT
+    if patient_wait_context:
+        system_prompt += "\n\n[Current patient wait/queue context - use this to answer wait time and queue questions] " + patient_wait_context
     if vitals_context:
         system_prompt += "\n\n[Patient's vitals - read these back if they ask for their vitals; do not interpret or diagnose] " + vitals_context
 
@@ -1800,10 +1834,12 @@ def api_ai_chat(request: Request, pid: str = Form(""), message: str = Form(""), 
         }
     resolved_pid = _resolve_code(pid) if pid else None
     vitals_context = None
+    patient_wait_context = None
     if resolved_pid:
         v = _latest_vitals_for_pid(resolved_pid)
         vitals_context = _format_vitals_context(v)
-    out = _ai_chat_reply(text, vitals_context=vitals_context)
+        patient_wait_context = _format_patient_wait_context(resolved_pid)
+    out = _ai_chat_reply(text, vitals_context=vitals_context, patient_wait_context=patient_wait_context)
     with STATE_LOCK:
         DB_CONN.execute(
             "INSERT INTO ai_conversations(pid, role, message, ts) VALUES(?,?,?,?)",

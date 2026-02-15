@@ -299,7 +299,7 @@ export function KioskCamera() {
     if (!successCard || kioskStep !== "vitals" || greetedRef.current) return;
     greetedRef.current = true;
     const msg =
-      "Hello, and welcome. Please place your finger on the sensor and enter your vitals";
+      "Hello, and welcome. Please use the provided sensors to record your blood pressure, pulse, and body temperature. Enter the readings in the slots below.";
     speakWithTts(msg);
   }, [successCard, kioskStep, speakWithTts]);
 
@@ -479,35 +479,35 @@ export function KioskCamera() {
                 </CardTitle>
                 <CardContent className="pt-0">
                   <p className="text-muted-foreground text-sm py-2">
-                    Enter readings from your external monitor or have staff enter them.
+                    Use the provided sensors to record your blood pressure, pulse, and body temperature, then enter the readings here (or have staff enter them).
                   </p>
                   <div className="max-w-md mx-auto mt-2">
                     <VitalsForm token={successCard.token} onSuccess={handleVitalsSubmitted} />
                   </div>
                   {autoVitals && (
                     <div className="grid grid-cols-2 sm:grid-cols-4 gap-3 py-4 mt-4 border-t border-border">
-                      {autoVitals.spo2 != null && (
+                      {(autoVitals.bp_sys != null || autoVitals.bp_dia != null) && (
                         <div className="rounded-lg bg-muted/50 p-3">
-                          <p className="text-muted-foreground text-xs">SpO2</p>
-                          <p className="text-xl font-bold">{autoVitals.spo2}%</p>
+                          <p className="text-muted-foreground text-xs">Blood pressure</p>
+                          <p className="text-xl font-bold">{autoVitals.bp_sys ?? "—"} / {autoVitals.bp_dia ?? "—"}</p>
                         </div>
                       )}
                       {autoVitals.hr != null && (
                         <div className="rounded-lg bg-muted/50 p-3">
-                          <p className="text-muted-foreground text-xs">Heart rate</p>
+                          <p className="text-muted-foreground text-xs">Pulse</p>
                           <p className="text-xl font-bold">{autoVitals.hr} bpm</p>
                         </div>
                       )}
                       {autoVitals.temp_c != null && (
                         <div className="rounded-lg bg-muted/50 p-3">
-                          <p className="text-muted-foreground text-xs">Temp</p>
+                          <p className="text-muted-foreground text-xs">Body temp</p>
                           <p className="text-xl font-bold">{autoVitals.temp_c} °C</p>
                         </div>
                       )}
-                      {(autoVitals.bp_sys != null || autoVitals.bp_dia != null) && (
+                      {autoVitals.spo2 != null && (
                         <div className="rounded-lg bg-muted/50 p-3">
-                          <p className="text-muted-foreground text-xs">BP</p>
-                          <p className="text-xl font-bold">{autoVitals.bp_sys ?? "—"} / {autoVitals.bp_dia ?? "—"}</p>
+                          <p className="text-muted-foreground text-xs">SpO2</p>
+                          <p className="text-xl font-bold">{autoVitals.spo2}%</p>
                         </div>
                       )}
                     </div>
