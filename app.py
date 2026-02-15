@@ -1693,7 +1693,13 @@ def api_ai_chat(request: Request, pid: str = Form(""), message: str = Form(""), 
     # #endregion
     text = (message or "").strip()
     if not text:
-        raise HTTPException(400, "Message is required.")
+        return {
+            "ok": True,
+            "provider": AI_PROVIDER,
+            "non_diagnostic": True,
+            "reply": "I didn't catch that. Please type or say something.",
+            "red_flags": [],
+        }
     out = _ai_chat_reply(text)
     resolved_pid = _resolve_code(pid) if pid else None
     with STATE_LOCK:
