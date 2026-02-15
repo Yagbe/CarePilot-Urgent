@@ -1732,6 +1732,43 @@ def api_ai_status():
     }
 
 
+@app.get("/api/ai/probe")
+def api_ai_probe():
+    """Run one Gemini call and return success or sanitized error (for debugging production). No secrets."""
+    if not GEMINI_API_KEY:
+        return {"ok": False, "error": "key_not_set"}
+    model = GEMINI_MODEL or "gemini-2.5-flash"
+    url = f"https://generativelanguage.googleapis.com/v1beta/models/{model}:generateContent?key={GEMINI_API_KEY}"
+    payload = {
+        "contents": [{"parts": [{"text": "Say only: OK"}]}],
+        "generationConfig": {"temperature": 0, "maxOutputTokens": 10},
+    }
+    try:
+        data = json.dumps(payload).encode("utf-8")
+        req = urllib.request.Request(
+            url, data=data, headers={"Content-Type": "application/json"}, method="POST"
+        )
+        with urllib.request.urlopen(req, timeout=15) as resp:
+            out = json.loads(resp.read().decode("utf-8"))
+        if out.get("error"):
+            return {"ok": False, "error": "api_error", "detail": str(out["error"])[:200]}
+        cand = out.get("candidates") or []
+        if not cand:
+            return {"ok": False, "error": "no_candidates", "keys": list(out.keys())}
+        return {"ok": True, "model": model}
+    except urllib.error.HTTPError as e:
+        body = ""
+        try:
+            body = e.read().decode("utf-8") if e.fp else ""
+        except Exception:
+            pass
+        return {"ok": False, "error": f"http_{e.code}", "detail": body[:300]}
+    except urllib.error.URLError as e:
+        return {"ok": False, "error": "network", "detail": str(e.reason)[:200]}
+    except Exception as e:
+        return {"ok": False, "error": type(e).__name__, "detail": str(e)[:200]}
+
+
 @app.get("/api/lobby-load")
 def api_lobby_load():
     return _lobby_load_score()
