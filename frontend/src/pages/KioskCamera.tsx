@@ -6,8 +6,10 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { postKioskCheckin, postAiChat, getAiSpeech, getVitalsByToken, getTriage, type VitalsReading, type TriageResult } from "@/api/client";
 import { motion } from "framer-motion";
-import { Mic, Activity } from "lucide-react";
+import { Mic, Activity, LayoutDashboard, Heart, MessageCircle, Info } from "lucide-react";
 import { VitalsForm } from "@/components/vitals/VitalsForm";
+
+type KioskPage = "overview" | "vitals" | "chat" | "info";
 
 function beep() {
   const Ctx = window.AudioContext || (window as unknown as { webkitAudioContext?: typeof AudioContext }).webkitAudioContext;
@@ -57,7 +59,15 @@ export function KioskCamera() {
   const [chatSending, setChatSending] = useState(false);
   const chatEndRef = useRef<HTMLDivElement>(null);
   const sensorBridgeUrlRef = useRef<string | null>(null);
+  const [kioskPage, setKioskPage] = useState<KioskPage>("overview");
   const AI_NAME = "CarePilot";
+
+  const kioskTabs: { id: KioskPage; label: string; icon: React.ReactNode }[] = [
+    { id: "overview", label: "Overview", icon: <LayoutDashboard className="h-4 w-4" /> },
+    { id: "vitals", label: "Vitals", icon: <Heart className="h-4 w-4" /> },
+    { id: "chat", label: "Chat", icon: <MessageCircle className="h-4 w-4" /> },
+    { id: "info", label: "Info", icon: <Info className="h-4 w-4" /> },
+  ];
 
   const speechQueueRef = useRef<{ text: string; onEnd?: () => void }[]>([]);
   const isPlayingSpeechRef = useRef(false);
@@ -438,13 +448,33 @@ export function KioskCamera() {
           <p className="px-4 pb-2 text-center text-muted-foreground text-xs">Scan your QR code or enter your token above.</p>
         </Card>
 
-        {/* Only after check-in: success summary + voice assistant */}
+        {/* Only after check-in: tabbed pages */}
         {successCard && (
           <motion.div
             initial={{ opacity: 0 }}
             animate={{ opacity: 1 }}
             className="w-full max-w-2xl space-y-4 text-center"
           >
+            {/* Tab bar */}
+            <div className="flex flex-wrap justify-center gap-1 rounded-lg border border-border bg-muted/30 p-1">
+              {kioskTabs.map((tab) => (
+                <Button
+                  key={tab.id}
+                  type="button"
+                  variant={kioskPage === tab.id ? "secondary" : "ghost"}
+                  size="sm"
+                  className="gap-1.5"
+                  onClick={() => setKioskPage(tab.id)}
+                >
+                  {tab.icon}
+                  {tab.label}
+                </Button>
+              ))}
+            </div>
+
+            {/* Overview page */}
+            {kioskPage === "overview" && (
+              <div className="space-y-4">
             <div className="rounded-lg border-l-4 border-green-600 bg-green-50 p-4 dark:bg-green-950">
               <p className="text-lg font-bold text-green-900 dark:text-green-100">✓ You're checked in</p>
               {successCard.display_name && (
@@ -487,7 +517,11 @@ export function KioskCamera() {
                 </p>
               </div>
             )}
+              </div>
+            )}
 
+            {/* Vitals page */}
+            {kioskPage === "vitals" && (
             <Card className="text-center">
               <CardHeader>
                 <CardTitle className="flex items-center justify-center gap-2 text-base">
@@ -545,7 +579,10 @@ export function KioskCamera() {
                 </CardContent>
               </CardHeader>
             </Card>
+            )}
 
+            {/* Chat page */}
+            {kioskPage === "chat" && (
             <Card>
               <CardHeader>
                 <CardTitle className="text-base">Chat with {AI_NAME} — ask wait time, wayfinding, or workflow</CardTitle>
@@ -608,6 +645,31 @@ export function KioskCamera() {
                 </CardContent>
               </CardHeader>
             </Card>
+            )}
+
+            {/* Info page */}
+            {kioskPage === "info" && (
+              <Card className="text-left">
+                <CardHeader>
+                  <CardTitle className="text-base">Help &amp; wayfinding</CardTitle>
+                </CardHeader>
+                <CardContent className="space-y-4 text-sm">
+                  <div>
+                    <p className="font-medium text-foreground">Waiting room</p>
+                    <p className="text-muted-foreground">Watch the main screen for your token. When it’s called, go to the front desk.</p>
+                  </div>
+                  <div>
+                    <p className="font-medium text-foreground">Restrooms</p>
+                    <p className="text-muted-foreground">Down the hall to the left, then follow the signs.</p>
+                  </div>
+                  <div>
+                    <p className="font-medium text-foreground">Water &amp; vending</p>
+                    <p className="text-muted-foreground">Available in the main waiting area.</p>
+                  </div>
+                  <p className="text-muted-foreground pt-2">Need help now? Raise your hand or speak to any staff member.</p>
+                </CardContent>
+              </Card>
+            )}
           </motion.div>
         )}
       </main>
