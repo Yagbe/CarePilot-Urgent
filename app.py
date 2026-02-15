@@ -105,6 +105,8 @@ OPENAI_API_KEY = os.getenv("OPENAI_API_KEY", "").strip()
 # Gemini: use GOOGLE_API_KEY (official SDK) or GEMINI_API_KEY
 GEMINI_API_KEY = os.getenv("GOOGLE_API_KEY", "").strip() or os.getenv("GEMINI_API_KEY", "").strip()
 GEMINI_MODEL = os.getenv("GEMINI_MODEL", "gemini-1.5-flash").strip() or "gemini-1.5-flash"
+# Optional: when set, kiosk will POST check-in token here (sensor bridge / token receiver). Leave unset to avoid localhost:9999 requests.
+SENSOR_BRIDGE_URL = (os.getenv("SENSOR_BRIDGE_URL", "").strip() or "").rstrip("/")
 patients: dict[str, dict[str, Any]] = {}
 queue_order: list[str] = []
 provider_count = 1
@@ -1172,6 +1174,12 @@ if not _SPA_BUILD:
 @app.get("/api/ping")
 def api_ping():
     return {"status": "ok", "app": "CarePilot Urgent", "version": APP_VERSION, "env": APP_ENV}
+
+
+@app.get("/api/config")
+def api_config():
+    """Public config for frontend (e.g. kiosk). Only includes optional sensor bridge URL when set."""
+    return {"sensor_bridge_url": SENSOR_BRIDGE_URL or None}
 
 
 @app.get("/api/demo-mode")

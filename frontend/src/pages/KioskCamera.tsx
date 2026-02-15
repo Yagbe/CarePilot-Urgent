@@ -56,7 +56,18 @@ export function KioskCamera() {
   const [chatInput, setChatInput] = useState("");
   const [chatSending, setChatSending] = useState(false);
   const chatEndRef = useRef<HTMLDivElement>(null);
+  const sensorBridgeUrlRef = useRef<string | null>(null);
   const AI_NAME = "CarePilot";
+
+  useEffect(() => {
+    fetch("/api/config", { credentials: "same-origin" })
+      .then((r) => r.json())
+      .then((d) => {
+        const url = d?.sensor_bridge_url ?? null;
+        sensorBridgeUrlRef.current = url && typeof url === "string" ? url.replace(/\/$/, "") : null;
+      })
+      .catch(() => {});
+  }, []);
 
   const submitCode = useCallback(async (code: string, fromCamera: boolean) => {
     if (!code.trim()) return;
@@ -78,15 +89,18 @@ export function KioskCamera() {
         triageSpokenRef.current = false;
         triageRequestedRef.current = false;
         beep();
-        // Tell local sensor bridge (Nano) which patient to send vitals for (optional; ignore if not running)
-        const ac = new AbortController();
-        const t = setTimeout(() => ac.abort(), 800);
-        fetch("http://localhost:9999/current-token", {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ token: res.token }),
-          signal: ac.signal,
-        }).catch(() => {}).finally(() => clearTimeout(t));
+        // Notify sensor bridge only when server config has SENSOR_BRIDGE_URL set (avoids localhost:9999 errors when bridge not used)
+        const base = sensorBridgeUrlRef.current;
+        if (base) {
+          const ac = new AbortController();
+          const t = setTimeout(() => ac.abort(), 800);
+          fetch(`${base}/current-token`, {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ token: res.token }),
+            signal: ac.signal,
+          }).catch(() => {}).finally(() => clearTimeout(t));
+        }
         if (fromCamera) {
           setScanningEnabled(false);
           cooldownUntilRef.current = Date.now() + 3000;
