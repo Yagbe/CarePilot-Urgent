@@ -288,13 +288,14 @@ export function KioskCamera() {
     }
   };
 
-  // On vitals step: say hello and ask them to enter vitals (once after check-in)
+  // Intro: speak once when they first land on vitals step after check-in
   useEffect(() => {
     if (!successCard || kioskStep !== "vitals" || greetedRef.current) return;
     greetedRef.current = true;
     const msg =
       "Hello, and welcome. Please use the provided sensors to record your blood pressure, pulse, and body temperature. Enter the readings in the slots below.";
-    speakWithTts(msg);
+    const t = setTimeout(() => speakWithTts(msg), 400);
+    return () => clearTimeout(t);
   }, [successCard, kioskStep, speakWithTts]);
 
   // Run triage when vitals appear (e.g. from effect when autoVitals set by polling or elsewhere)
