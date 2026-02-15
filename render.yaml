@@ -9,7 +9,7 @@ services:
         value: production
       - key: ENABLE_DOCS
         value: "0"
-      # Set STAFF_ACCESS_PASSWORD in Render dashboard (required; do not use 1234 in production)
+      # Set in Render dashboard: STAFF_ACCESS_PASSWORD, APP_SECRET_KEY, GEMINI_API_KEY (for kiosk AI chat)
       - key: APP_SECRET_KEY
         generateValue: true
       - key: DB_PATH

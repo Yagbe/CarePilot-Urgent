@@ -16,6 +16,7 @@ Deploy the app (FastAPI + React SPA + SQLite) to **Railway** or **Render** in a 
    - Add **Variables** (Settings → Variables):
      - `STAFF_ACCESS_PASSWORD` = a strong password (not `1234` in production).
      - `APP_SECRET_KEY` = a long random string (e.g. from `openssl rand -hex 32`).
+     - `GEMINI_API_KEY` = your Google Gemini API key (from [Google AI Studio](https://aistudio.google.com/apikey)) so the kiosk chat uses Gemini AI.
      - `PORT` is set by Railway; no need to add it.
      - Optional: `DB_PATH=/data/carepilot.db` and add a **Volume** mounted at `/data` (Settings → Volumes) so SQLite persists across deploys.
 
@@ -36,10 +37,11 @@ Deploy the app (FastAPI + React SPA + SQLite) to **Railway** or **Render** in a 
    - **Dockerfile path:** `./Dockerfile` (or leave default if it finds it).
    - **Instance type:** Free or paid.
 
-4. **Environment:**
+4. **Environment:** In Render dashboard → Environment, add:
    - `APP_ENV` = `production`
    - `STAFF_ACCESS_PASSWORD` = your staff password
    - `APP_SECRET_KEY` = long random string
+   - `GEMINI_API_KEY` = your Gemini API key (from [Google AI Studio](https://aistudio.google.com/apikey)) so the kiosk AI chat works.
    - `DB_PATH` = `/data/carepilot.db`  
      For persistent SQLite, add a **Disk** in the Render dashboard, mount path `/data`, then redeploy.
 

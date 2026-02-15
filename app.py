@@ -19,6 +19,7 @@ import threading
 import time
 import uuid
 import sqlite3
+import urllib.error
 import urllib.request
 from collections import deque
 from datetime import datetime, timedelta
@@ -392,7 +393,8 @@ CLUSTER_KEYWORDS = {
 }
 
 RED_FLAG_KEYWORDS = [
-    "chest pain", "difficulty breathing", "can't breathe", "unconscious", "seizure",
+    "chest pain", "difficulty breathing", "can't breathe", "trouble breathing",
+    "having trouble breathing", "shortness of breath", "unconscious", "seizure",
     "bleeding heavily", "stroke", "heart attack", "anaphylaxis", "overdose",
 ]
 
@@ -1043,7 +1045,8 @@ def _gemini_generate(system_instruction: str, user_text: str) -> Optional[str]:
     """Call Gemini API (REST). Returns generated text or None on error."""
     if not GEMINI_API_KEY:
         return None
-    url = f"https://generativelanguage.googleapis.com/v1beta/models/{GEMINI_MODEL}:generateContent"
+    # Use key in URL (most reliable for generativelanguage.googleapis.com)
+    url = f"https://generativelanguage.googleapis.com/v1beta/models/{GEMINI_MODEL}:generateContent?key={GEMINI_API_KEY}"
     payload = {
         "systemInstruction": {"parts": [{"text": system_instruction}]},
         "contents": [{"parts": [{"text": user_text}]}],
@@ -1058,15 +1061,15 @@ def _gemini_generate(system_instruction: str, user_text: str) -> Optional[str]:
         req = urllib.request.Request(
             url,
             data=data,
-            headers={
-                "Content-Type": "application/json",
-                "x-goog-api-key": GEMINI_API_KEY,
-            },
+            headers={"Content-Type": "application/json"},
             method="POST",
         )
-        with urllib.request.urlopen(req, timeout=15) as resp:
+        with urllib.request.urlopen(req, timeout=20) as resp:
             out = json.loads(resp.read().decode("utf-8"))
-        if out.get("error"):
+        err = out.get("error")
+        if err:
+            if APP_ENV != "production":
+                print(f"Gemini API error: {err}", flush=True)
             return None
         cand = out.get("candidates") or []
         if not cand:
@@ -1078,7 +1081,14 @@ def _gemini_generate(system_instruction: str, user_text: str) -> Optional[str]:
         if not parts:
             return None
         return (parts[0].get("text") or "").strip()
-    except Exception:
+    except urllib.error.HTTPError as e:
+        body = e.read().decode("utf-8") if e.fp else ""
+        if APP_ENV != "production":
+            print(f"Gemini HTTP {e.code}: {body[:500]}", flush=True)
+        return None
+    except Exception as e:
+        if APP_ENV != "production":
+            print(f"Gemini request failed: {e}", flush=True)
         return None
 
 
@@ -1103,20 +1113,25 @@ def _ai_chat_reply(user_text: str) -> dict[str, Any]:
             "Please alert clinic staff now for immediate support."
         )
         return {"reply": reply, "red_flags": red_flags}
-    # Prefer Gemini when key is set
-    if GEMINI_API_KEY and AI_PROVIDER == "gemini":
+    # Use Gemini whenever API key is set (ignore AI_PROVIDER so Gemini is always used if key present)
+    if GEMINI_API_KEY:
         gemini_reply = _gemini_generate(AI_CHAT_SYSTEM_PROMPT, text)
         if gemini_reply:
             return {"reply": gemini_reply, "red_flags": []}
-    # Fallback: rule-based
+    # Fallback: rule-based (when Gemini unavailable or key not set)
     if "language" in low or "arabic" in low:
         reply = "We can support multilingual intake. Please choose your preferred language on this kiosk."
     elif "sensor" in low or "finger" in low:
         reply = "Please place one finger on the sensor, keep still, and wait for confirmation."
+    elif "help" in low or "wait" in low or "where" in low:
+        reply = (
+            "I'm here to help. You can ask about wait times (check the screen or ask staff), "
+            "where the waiting room or restroom is, or how to use the vitals sensor. For anything urgent, please tell a staff member."
+        )
     else:
         reply = (
-            "I can help with check-in steps and workflow only. "
-            "Please share symptoms duration and any mobility assistance needs."
+            "I can help with check-in, wait times, wayfinding, and sensor steps. "
+            "What would you like to know? For anything urgent, please alert staff."
         )
     return {"reply": reply, "red_flags": []}
 
