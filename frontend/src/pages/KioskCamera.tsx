@@ -631,7 +631,7 @@ export function KioskCamera() {
               </CardHeader>
             </Card>
             <Button type="button" variant="secondary" size="lg" className="w-full max-w-xs" onClick={handleSessionDone}>
-              Session done — next customer
+              Session done
             </Button>
           </motion.div>
         )}
