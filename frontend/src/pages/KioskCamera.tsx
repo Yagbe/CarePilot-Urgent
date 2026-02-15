@@ -85,6 +85,16 @@ export function KioskCamera() {
     if ("speechSynthesis" in window) {
       window.speechSynthesis.cancel();
     }
+    const fallbackToBrowserTts = () => {
+      if ("speechSynthesis" in window) {
+        const u = new SpeechSynthesisUtterance(text);
+        u.onend = () => done();
+        window.speechSynthesis.speak(u);
+      } else {
+        done();
+      }
+    };
+
     const playWithFallback = () => {
       getAiSpeech(text)
         .then((blob) => {
@@ -97,33 +107,17 @@ export function KioskCamera() {
             };
             audio.onerror = () => {
               URL.revokeObjectURL(url);
-              if ("speechSynthesis" in window) {
-                const u = new SpeechSynthesisUtterance(text);
-                u.onend = () => done();
-                window.speechSynthesis.speak(u);
-              } else {
-                done();
-              }
+              fallbackToBrowserTts();
             };
-            return audio.play().catch(() => done());
+            audio.play().catch(() => {
+              URL.revokeObjectURL(url);
+              fallbackToBrowserTts();
+            });
+            return;
           }
-          if ("speechSynthesis" in window) {
-            const u = new SpeechSynthesisUtterance(text);
-            u.onend = () => done();
-            window.speechSynthesis.speak(u);
-          } else {
-            done();
-          }
+          fallbackToBrowserTts();
         })
-        .catch(() => {
-          if ("speechSynthesis" in window) {
-            const u = new SpeechSynthesisUtterance(text);
-            u.onend = () => done();
-            window.speechSynthesis.speak(u);
-          } else {
-            done();
-          }
-        });
+        .catch(fallbackToBrowserTts);
     };
     playWithFallback();
   }, []);
