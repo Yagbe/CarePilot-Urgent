@@ -198,10 +198,14 @@ export async function postVitalsSimulate(pid: string): Promise<void> {
   if (!r.ok) throw new Error("Failed to simulate vitals");
 }
 
-export async function postAiChat(message: string): Promise<{ reply: string; red_flags?: string[] }> {
+export async function postAiChat(
+  message: string,
+  options?: { token?: string }
+): Promise<{ reply: string; red_flags?: string[] }> {
   const form = new FormData();
   form.append("message", message);
   form.append("role", "patient");
+  if (options?.token) form.append("pid", options.token);
   const r = await fetch(`${API}/api/ai/chat`, { method: "POST", body: form, credentials: "same-origin" });
   if (!r.ok) throw new Error("AI chat failed");
   return r.json();

@@ -59,51 +59,88 @@ export function KioskCamera() {
   const sensorBridgeUrlRef = useRef<string | null>(null);
   const AI_NAME = "CarePilot";
 
-  /** Speak with OpenAI TTS when available, else browser speechSynthesis. Calls onEnd when done. */
-  const speakWithTts = useCallback(async (text: string, onEnd?: () => void) => {
-    if (!text?.trim()) {
+  const speechQueueRef = useRef<{ text: string; onEnd?: () => void }[]>([]);
+  const isPlayingSpeechRef = useRef(false);
+
+  /** Play the next item in the speech queue. Only one utterance at a time. */
+  const playNextInQueue = useCallback(() => {
+    if (isPlayingSpeechRef.current) return;
+    const queue = speechQueueRef.current;
+    if (queue.length === 0) return;
+    const item = queue.shift()!;
+    const text = item.text?.trim() || "";
+    const onEnd = item.onEnd;
+    if (!text) {
       onEnd?.();
+      playNextInQueue();
       return;
     }
-    try {
-      const blob = await getAiSpeech(text);
-      if (blob && blob.size > 0) {
-        const url = URL.createObjectURL(blob);
-        const audio = new Audio(url);
-        audio.onended = () => {
-          URL.revokeObjectURL(url);
-          onEnd?.();
-        };
-        audio.onerror = (e) => {
-          console.warn("[CarePilot] OpenAI TTS playback failed, using browser voice", e);
-          URL.revokeObjectURL(url);
+    isPlayingSpeechRef.current = true;
+    const done = () => {
+      isPlayingSpeechRef.current = false;
+      onEnd?.();
+      playNextInQueue();
+    };
+    if ("speechSynthesis" in window) {
+      window.speechSynthesis.cancel();
+    }
+    const playWithFallback = () => {
+      getAiSpeech(text)
+        .then((blob) => {
+          if (blob && blob.size > 0) {
+            const url = URL.createObjectURL(blob);
+            const audio = new Audio(url);
+            audio.onended = () => {
+              URL.revokeObjectURL(url);
+              done();
+            };
+            audio.onerror = () => {
+              URL.revokeObjectURL(url);
+              if ("speechSynthesis" in window) {
+                const u = new SpeechSynthesisUtterance(text);
+                u.onend = () => done();
+                window.speechSynthesis.speak(u);
+              } else {
+                done();
+              }
+            };
+            return audio.play().catch(() => done());
+          }
           if ("speechSynthesis" in window) {
             const u = new SpeechSynthesisUtterance(text);
-            u.onend = () => onEnd?.();
+            u.onend = () => done();
             window.speechSynthesis.speak(u);
           } else {
-            onEnd?.();
+            done();
           }
-        };
-        await audio.play();
-        if (typeof console !== "undefined" && console.debug) {
-          console.debug("[CarePilot] Voice: OpenAI TTS (tts-1-hd)");
-        }
+        })
+        .catch(() => {
+          if ("speechSynthesis" in window) {
+            const u = new SpeechSynthesisUtterance(text);
+            u.onend = () => done();
+            window.speechSynthesis.speak(u);
+          } else {
+            done();
+          }
+        });
+    };
+    playWithFallback();
+  }, []);
+
+  /** Speak with OpenAI TTS when available, else browser speechSynthesis. Queued so only one line at a time. */
+  const speakWithTts = useCallback(
+    (text: string, onEnd?: () => void) => {
+      if (!text?.trim()) {
+        onEnd?.();
         return;
       }
-    } catch (err) {
-      if (typeof console !== "undefined" && console.debug) {
-        console.debug("[CarePilot] Voice: browser fallback (TTS request failed)", err);
+      speechQueueRef.current.push({ text, onEnd });
+      if (!isPlayingSpeechRef.current) {
+        playNextInQueue();
       }
-    }
-    if ("speechSynthesis" in window) {
-      const u = new SpeechSynthesisUtterance(text);
-      u.onend = () => onEnd?.();
-      window.speechSynthesis.speak(u);
-    } else {
-      onEnd?.();
-    }
-  }, []);
+    },
+    [playNextInQueue]
+  );
 
   useEffect(() => {
     fetch("/api/config", { credentials: "same-origin" })
@@ -224,7 +261,7 @@ export function KioskCamera() {
       if (!text) return;
       setTranscript((prev) => [{ role: "user", text }, ...prev]);
       setVoiceState("processing");
-      postAiChat(text)
+      postAiChat(text, { token: successCard?.token })
         .then((data) => {
           setTranscript((prev) => [{ role: "assistant", text: data.reply ?? "Unable to respond." }, ...prev]);
           if (data.red_flags?.length) {
@@ -247,7 +284,7 @@ export function KioskCamera() {
     return () => {
       rec.abort();
     };
-  }, []);
+  }, [successCard?.token]);
 
   const startListening = () => {
     setRedFlagAlert(false);
@@ -262,7 +299,7 @@ export function KioskCamera() {
     setChatSending(true);
     setRedFlagAlert(false);
     try {
-      const data = await postAiChat(msg);
+      const data = await postAiChat(msg, { token: successCard?.token });
       setTranscript((prev) => [...prev, { role: "assistant", text: data.reply ?? "No response." }]);
       if (data.red_flags?.length) {
         setRedFlagAlert(true);

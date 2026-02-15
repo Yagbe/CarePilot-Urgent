@@ -1208,7 +1208,25 @@ Rules:
 - For sensors/vitals: say to place one finger on the sensor and hold still until they see confirmation."""
 
 
-def _ai_chat_reply(user_text: str) -> dict[str, Any]:
+def _format_vitals_context(v: Optional[dict[str, Any]]) -> str:
+    """Format latest vitals for AI context. Non-diagnostic; for reference only."""
+    if not v:
+        return "No vitals on file for this patient yet."
+    parts = []
+    if v.get("spo2") is not None:
+        parts.append(f"SpO2 {int(v['spo2'])}%")
+    if v.get("hr") is not None:
+        parts.append(f"HR {int(v['hr'])} bpm")
+    if v.get("temp_c") is not None:
+        parts.append(f"Temp {v['temp_c']}°C")
+    if v.get("bp_sys") is not None and v.get("bp_dia") is not None:
+        parts.append(f"BP {int(v['bp_sys'])}/{int(v['bp_dia'])}")
+    if not parts:
+        return "No vitals on file for this patient yet."
+    return "Latest vitals: " + ", ".join(parts) + ". Use only to read back if the patient asks; do not interpret or diagnose."
+
+
+def _ai_chat_reply(user_text: str, vitals_context: Optional[str] = None) -> dict[str, Any]:
     """Chat replies from OpenAI or Gemini per AI_PROVIDER. Red-flag phrases get a fixed safety message."""
     text = (user_text or "").strip()
     low = text.lower()
@@ -1220,6 +1238,10 @@ def _ai_chat_reply(user_text: str) -> dict[str, Any]:
         )
         return {"reply": reply, "red_flags": red_flags}
 
+    system_prompt = AI_CHAT_SYSTEM_PROMPT
+    if vitals_context:
+        system_prompt += "\n\nCurrent patient's vitals (reference only; do not diagnose): " + vitals_context
+
     if AI_PROVIDER == "openai":
         # #region agent log
         _agent_log("chat_reply: check key", {"provider": "openai", "key_set": bool(OPENAI_API_KEY), "key_len": len(OPENAI_API_KEY)}, "A")
@@ -1229,7 +1251,7 @@ def _ai_chat_reply(user_text: str) -> dict[str, Any]:
                 "reply": "The AI assistant is not configured (missing OPENAI_API_KEY). Please ask a staff member.",
                 "red_flags": [],
             }
-        openai_reply = _openai_generate(AI_CHAT_SYSTEM_PROMPT, text)
+        openai_reply = _openai_generate(system_prompt, text)
         # #region agent log
         _agent_log("chat_reply: after openai", {"got_reply": bool(openai_reply), "reply_len": len(openai_reply) if openai_reply else 0}, "E")
         # #endregion
@@ -1249,7 +1271,7 @@ def _ai_chat_reply(user_text: str) -> dict[str, Any]:
             "reply": "The AI assistant is not configured (missing GEMINI_API_KEY). Please ask a staff member.",
             "red_flags": [],
         }
-    gemini_reply = _gemini_generate(AI_CHAT_SYSTEM_PROMPT, text)
+    gemini_reply = _gemini_generate(system_prompt, text)
     # #region agent log
     _agent_log("chat_reply: after gemini", {"got_reply": bool(gemini_reply), "reply_len": len(gemini_reply) if gemini_reply else 0}, "E")
     # #endregion
@@ -1775,8 +1797,12 @@ def api_ai_chat(request: Request, pid: str = Form(""), message: str = Form(""), 
             "reply": "I didn't catch that. Please type or say something.",
             "red_flags": [],
         }
-    out = _ai_chat_reply(text)
     resolved_pid = _resolve_code(pid) if pid else None
+    vitals_context = None
+    if resolved_pid:
+        v = _latest_vitals_for_pid(resolved_pid)
+        vitals_context = _format_vitals_context(v)
+    out = _ai_chat_reply(text, vitals_context=vitals_context)
     with STATE_LOCK:
         DB_CONN.execute(
             "INSERT INTO ai_conversations(pid, role, message, ts) VALUES(?,?,?,?)",
