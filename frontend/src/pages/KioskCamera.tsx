@@ -303,7 +303,7 @@ export function KioskCamera() {
     speakWithTts(msg);
   }, [successCard, kioskStep, speakWithTts]);
 
-  // Run triage only after we have vitals (so we can say if vitals look good/bad/emergency)
+  // Run triage when vitals appear (e.g. from effect when autoVitals set by polling or elsewhere)
   useEffect(() => {
     if (!successCard?.token || triageRequestedRef.current) return;
     if (!autoVitals) return;
@@ -314,6 +314,20 @@ export function KioskCamera() {
         triageRequestedRef.current = false;
       });
   }, [successCard?.token, autoVitals]);
+
+  /** Call when vitals form is submitted: refetch vitals, run triage (AI judges health from vitals), and activate bot to speak. */
+  const handleVitalsSubmitted = useCallback(() => {
+    if (!successCard?.token) return;
+    getVitalsByToken(successCard.token).then((r) => {
+      if (r.vitals) setAutoVitals(r.vitals);
+    });
+    triageSpokenRef.current = false;
+    getTriage(successCard.token)
+      .then((result) => {
+        setTriageResult(result);
+      })
+      .catch(() => {});
+  }, [successCard?.token]);
 
   // When user goes to chat without vitals yet, run triage once so we have a result (backend uses null vitals → low)
   useEffect(() => {
@@ -468,7 +482,7 @@ export function KioskCamera() {
                     Enter readings from your external monitor or have staff enter them.
                   </p>
                   <div className="max-w-md mx-auto mt-2">
-                    <VitalsForm token={successCard.token} onSuccess={() => getVitalsByToken(successCard.token).then((r) => r.vitals && setAutoVitals(r.vitals))} />
+                    <VitalsForm token={successCard.token} onSuccess={handleVitalsSubmitted} />
                   </div>
                   {autoVitals && (
                     <div className="grid grid-cols-2 sm:grid-cols-4 gap-3 py-4 mt-4 border-t border-border">
