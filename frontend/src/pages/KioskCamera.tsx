@@ -64,7 +64,8 @@ export function KioskCamera() {
       .then((r) => r.json())
       .then((d) => {
         const url = d?.sensor_bridge_url ?? null;
-        sensorBridgeUrlRef.current = url && typeof url === "string" ? url.replace(/\/$/, "") : null;
+        sensorBridgeUrlRef.current =
+          url && typeof url === "string" && url.trim() ? url.trim().replace(/\/$/, "") : null;
       })
       .catch(() => {});
   }, []);
