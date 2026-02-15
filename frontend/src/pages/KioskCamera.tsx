@@ -4,7 +4,7 @@ import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
-import { postKioskCheckin, postAiChat, getVitalsByToken, getTriage, type VitalsReading, type TriageResult } from "@/api/client";
+import { postKioskCheckin, postAiChat, getAiSpeech, getVitalsByToken, getTriage, type VitalsReading, type TriageResult } from "@/api/client";
 import { motion } from "framer-motion";
 import { Mic, Activity } from "lucide-react";
 import { VitalsForm } from "@/components/vitals/VitalsForm";
@@ -58,6 +58,46 @@ export function KioskCamera() {
   const chatEndRef = useRef<HTMLDivElement>(null);
   const sensorBridgeUrlRef = useRef<string | null>(null);
   const AI_NAME = "CarePilot";
+
+  /** Speak with OpenAI TTS when available, else browser speechSynthesis. Calls onEnd when done. */
+  const speakWithTts = useCallback(async (text: string, onEnd?: () => void) => {
+    if (!text?.trim()) {
+      onEnd?.();
+      return;
+    }
+    try {
+      const blob = await getAiSpeech(text);
+      if (blob && blob.size > 0) {
+        const url = URL.createObjectURL(blob);
+        const audio = new Audio(url);
+        audio.onended = () => {
+          URL.revokeObjectURL(url);
+          onEnd?.();
+        };
+        audio.onerror = () => {
+          URL.revokeObjectURL(url);
+          if ("speechSynthesis" in window) {
+            const u = new SpeechSynthesisUtterance(text);
+            u.onend = () => onEnd?.();
+            window.speechSynthesis.speak(u);
+          } else {
+            onEnd?.();
+          }
+        };
+        await audio.play();
+        return;
+      }
+    } catch {
+      /* fallback below */
+    }
+    if ("speechSynthesis" in window) {
+      const u = new SpeechSynthesisUtterance(text);
+      u.onend = () => onEnd?.();
+      window.speechSynthesis.speak(u);
+    } else {
+      onEnd?.();
+    }
+  }, []);
 
   useEffect(() => {
     fetch("/api/config", { credentials: "same-origin" })
@@ -185,11 +225,9 @@ export function KioskCamera() {
             setRedFlagAlert(true);
             beep();
           }
-          if ("speechSynthesis" in window && data.reply) {
+          if (data.reply) {
             setVoiceState("speaking");
-            const u = new SpeechSynthesisUtterance(data.reply);
-            window.speechSynthesis.speak(u);
-            u.onend = () => setVoiceState("idle");
+            speakWithTts(data.reply, () => setVoiceState("idle"));
           } else {
             setVoiceState("idle");
           }
@@ -224,9 +262,8 @@ export function KioskCamera() {
         setRedFlagAlert(true);
         beep();
       }
-      if ("speechSynthesis" in window && data.reply) {
-        const u = new SpeechSynthesisUtterance(data.reply);
-        window.speechSynthesis.speak(u);
+      if (data.reply) {
+        speakWithTts(data.reply);
       }
       setTimeout(() => chatEndRef.current?.scrollIntoView({ behavior: "smooth" }), 100);
     } catch {
@@ -236,16 +273,13 @@ export function KioskCamera() {
     }
   };
 
-  // Speak AI greeting once after check-in
+  // Speak AI greeting once after check-in (OpenAI TTS when available)
   useEffect(() => {
     if (!successCard || greetedRef.current) return;
     greetedRef.current = true;
     const msg = `Greetings, my name is ${AI_NAME} and I will be your AI medical assistant. Before we get started, I am going to take a look at your vital signs.`;
-    if ("speechSynthesis" in window) {
-      const u = new SpeechSynthesisUtterance(msg);
-      window.speechSynthesis.speak(u);
-    }
-  }, [successCard]);
+    speakWithTts(msg);
+  }, [successCard, speakWithTts]);
 
   // Run triage once when vitals are available or after 6s
   useEffect(() => {
@@ -271,11 +305,8 @@ export function KioskCamera() {
     if (!successCard || !triageResult || triageSpokenRef.current) return;
     triageSpokenRef.current = true;
     const msg = triageResult.ai_script;
-    if ("speechSynthesis" in window && msg) {
-      const u = new SpeechSynthesisUtterance(msg);
-      window.speechSynthesis.speak(u);
-    }
-  }, [successCard, triageResult]);
+    if (msg) speakWithTts(msg);
+  }, [successCard, triageResult, speakWithTts]);
 
   // After triage outcome spoken, announce wait time once (medium/low only)
   useEffect(() => {
@@ -285,13 +316,10 @@ export function KioskCamera() {
       const mins = successCard.estimated_wait_min;
       const waitText = mins <= 0 ? "a short time" : `${mins} minute${mins !== 1 ? "s" : ""}`;
       const msg = `Your estimated wait is ${waitText}. If you have any questions, ask me now.`;
-      if ("speechSynthesis" in window) {
-        const u = new SpeechSynthesisUtterance(msg);
-        window.speechSynthesis.speak(u);
-      }
+      speakWithTts(msg);
     }, 4000);
     return () => clearTimeout(id);
-  }, [successCard, triageResult]);
+  }, [successCard, triageResult, speakWithTts]);
 
   const handleNextPatient = () => {
     setSuccessCard(null);

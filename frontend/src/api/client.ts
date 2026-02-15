@@ -207,6 +207,18 @@ export async function postAiChat(message: string): Promise<{ reply: string; red_
   return r.json();
 }
 
+/** Fetch TTS audio from backend (OpenAI tts-1-hd). Returns blob or null if TTS unavailable. */
+export async function getAiSpeech(text: string): Promise<Blob | null> {
+  const r = await fetch(`${API}/api/ai/speak`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ text }),
+    credentials: "same-origin",
+  });
+  if (!r.ok) return null;
+  return r.blob();
+}
+
 export async function getLobbyLoad(): Promise<{ level: string; queue_size: number }> {
   const r = await fetch(`${API}/api/lobby-load`, { credentials: "same-origin" });
   if (!r.ok) return { level: "Low", queue_size: 0 };

@@ -77,6 +77,10 @@ class KioskCheckinRequest(BaseModel):
     code: str = ""
 
 
+class SpeakRequest(BaseModel):
+    text: str = ""
+
+
 class VitalsSubmitRequest(BaseModel):
     """JSON body for sensor bridge / automatic vitals submission."""
     token: str = ""
@@ -123,6 +127,8 @@ OPENAI_API_KEY = os.getenv("OPENAI_API_KEY", "").strip()
 GEMINI_API_KEY = os.getenv("GEMINI_API_KEY", "").strip()
 GEMINI_MODEL = os.getenv("GEMINI_MODEL", "gemini-2.5-flash").strip() or "gemini-2.5-flash"
 OPENAI_MODEL = os.getenv("OPENAI_MODEL", "gpt-4o-mini").strip() or "gpt-4o-mini"
+OPENAI_TTS_MODEL = os.getenv("OPENAI_TTS_MODEL", "tts-1-hd").strip() or "tts-1-hd"
+OPENAI_TTS_VOICE = os.getenv("OPENAI_TTS_VOICE", "nova").strip().lower() or "nova"
 # Optional: when set, kiosk will POST check-in token here (sensor bridge / token receiver). Leave unset to avoid localhost:9999 requests.
 SENSOR_BRIDGE_URL = (os.getenv("SENSOR_BRIDGE_URL", "").strip() or "").rstrip("/")
 patients: dict[str, dict[str, Any]] = {}
@@ -1788,6 +1794,42 @@ def api_ai_chat(request: Request, pid: str = Form(""), message: str = Form(""), 
         "reply": out["reply"],
         "red_flags": out["red_flags"],
     }
+
+
+@app.post("/api/ai/speak")
+def api_ai_speak(body: SpeakRequest):
+    """Text-to-speech via OpenAI TTS (tts-1-hd). Returns audio/mpeg. Requires OPENAI_API_KEY."""
+    text = (body.text or "").strip()
+    if not text:
+        raise HTTPException(400, "text is required")
+    if not OPENAI_API_KEY:
+        raise HTTPException(503, "TTS not configured (missing OPENAI_API_KEY)")
+    url = "https://api.openai.com/v1/audio/speech"
+    payload = {
+        "model": OPENAI_TTS_MODEL,
+        "input": text[:4096],
+        "voice": OPENAI_TTS_VOICE if OPENAI_TTS_VOICE in ("alloy", "ash", "ballad", "coral", "echo", "fable", "marin", "cedar", "nova", "onyx", "sage", "shimmer", "verse") else "nova",
+    }
+    try:
+        data = json.dumps(payload).encode("utf-8")
+        req = urllib.request.Request(
+            url,
+            data=data,
+            headers={"Content-Type": "application/json", "Authorization": f"Bearer {OPENAI_API_KEY}"},
+            method="POST",
+        )
+        with urllib.request.urlopen(req, timeout=30) as resp:
+            audio_bytes = resp.read()
+        return Response(content=audio_bytes, media_type="audio/mpeg")
+    except urllib.error.HTTPError as e:
+        body_bytes = b""
+        try:
+            body_bytes = e.read() if e.fp else b""
+        except Exception:
+            pass
+        raise HTTPException(502, f"TTS failed: {e.code}")
+    except Exception as e:
+        raise HTTPException(502, "TTS failed")
 
 
 @app.get("/api/ai/status")
