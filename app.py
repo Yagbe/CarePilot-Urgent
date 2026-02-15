@@ -121,7 +121,7 @@ AI_PROVIDER = os.getenv("AI_PROVIDER", "gemini").lower()
 OPENAI_API_KEY = os.getenv("OPENAI_API_KEY", "").strip()
 # Gemini: key must be set in .env as GEMINI_API_KEY (no hardcoded keys)
 GEMINI_API_KEY = os.getenv("GEMINI_API_KEY", "").strip()
-GEMINI_MODEL = os.getenv("GEMINI_MODEL", "gemini-1.5-flash").strip() or "gemini-1.5-flash"
+GEMINI_MODEL = os.getenv("GEMINI_MODEL", "gemini-2.5-flash").strip() or "gemini-2.5-flash"
 # Optional: when set, kiosk will POST check-in token here (sensor bridge / token receiver). Leave unset to avoid localhost:9999 requests.
 SENSOR_BRIDGE_URL = (os.getenv("SENSOR_BRIDGE_URL", "").strip() or "").rstrip("/")
 patients: dict[str, dict[str, Any]] = {}
@@ -1067,7 +1067,7 @@ def _gemini_generate(system_instruction: str, user_text: str) -> Optional[str]:
         _agent_log("gemini: key missing", {"key_len": 0}, "A")
         # #endregion
         return None
-    models_to_try = [GEMINI_MODEL, "gemini-1.5-flash", "gemini-1.5-flash-latest", "gemini-pro"]
+    models_to_try = [GEMINI_MODEL, "gemini-2.5-flash", "gemini-2.0-flash", "gemini-flash-latest", "gemini-pro-latest"]
     seen = set()
     last_error: Optional[str] = None
     inline_prompt = f"{system_instruction}\n\nUser: {user_text}\n\nAssistant:"
