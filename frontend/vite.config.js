@@ -7,6 +7,13 @@ export default defineConfig({
         alias: { "@": path.resolve(__dirname, "./src") },
     },
     base: "/",
+    server: {
+        proxy: {
+            "/api": { target: "http://localhost:8000", changeOrigin: true },
+            "/camera": { target: "http://localhost:8000", changeOrigin: true },
+            "/openapi.json": { target: "http://localhost:8000", changeOrigin: true },
+        },
+    },
     build: {
         outDir: "dist",
         emptyOutDir: true,
