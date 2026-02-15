@@ -3,6 +3,8 @@ import { useNavigate } from "react-router-dom";
 import { StaffTopbar } from "@/components/layout/Topbar";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { getAnalytics, getLobbyLoad, getDemoMode, ApiError, type AnalyticsData } from "@/api/client";
+import { motion } from "framer-motion";
+import { Users } from "lucide-react";
 import {
   AreaChart,
   Area,
@@ -78,23 +80,63 @@ export function Analytics() {
           Forecasting and what-if staffing impact for the next 2 hours.
         </p>
 
-        <Card>
+        <Card className="overflow-hidden">
           <CardHeader>
-            <CardTitle className="text-base">Providers available (what-if)</CardTitle>
-            <CardContent className="pt-2">
-              <input
-                type="range"
-                min={1}
-                max={3}
-                value={providers}
-                onChange={(e) => setProviders(Number(e.target.value))}
-                className="w-full accent-primary"
-              />
-              <p className="text-muted-foreground text-sm">
-                Provider count: <strong>{providers}</strong>
-              </p>
-            </CardContent>
+            <CardTitle className="flex items-center gap-2 text-base">
+              <Users className="h-5 w-5 text-primary" />
+              Providers available (what-if)
+            </CardTitle>
           </CardHeader>
+          <CardContent className="pt-0">
+              <p className="text-muted-foreground mb-4 text-sm">
+                Adjust to see impact on wait times and recommendations.
+              </p>
+              <div className="flex items-center gap-2">
+                <div
+                  role="tablist"
+                  aria-label="Provider count"
+                  className="inline-flex rounded-xl bg-muted p-1 shadow-inner"
+                >
+                  {[1, 2, 3].map((n) => (
+                    <button
+                      key={n}
+                      role="tab"
+                      aria-selected={providers === n}
+                      aria-label={`${n} provider${n > 1 ? "s" : ""}`}
+                      onClick={() => setProviders(n)}
+                      className="relative rounded-lg px-6 py-2.5 text-sm font-semibold transition-colors focus:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2"
+                    >
+                      {providers === n && (
+                        <motion.span
+                          layoutId="provider-pill"
+                          className="absolute inset-0 rounded-lg bg-primary text-primary-foreground"
+                          initial={false}
+                          transition={{ type: "spring", stiffness: 400, damping: 30 }}
+                          style={{ zIndex: 0 }}
+                        />
+                      )}
+                      <span
+                        className={`relative z-10 ${providers === n ? "text-primary-foreground" : "text-muted-foreground"}`}
+                      >
+                        {n}
+                      </span>
+                    </button>
+                  ))}
+                </div>
+                <span className="text-muted-foreground ml-2 text-sm tabular-nums">
+                  {providers} provider{providers !== 1 ? "s" : ""} selected
+                </span>
+              </div>
+              <div className="mt-4 flex items-center gap-2 rounded-lg border border-border bg-muted/30 px-4 py-3">
+                <div className="flex h-10 w-10 items-center justify-center rounded-full bg-primary/15">
+                  <span className="text-lg font-bold text-primary tabular-nums">{providers}</span>
+                </div>
+                <div>
+                  <p className="text-sm font-medium">Current what-if</p>
+                  <p className="text-muted-foreground text-xs">Forecast uses this provider count</p>
+                </div>
+              </div>
+            </CardContent>
         </Card>
 
         <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-4">
