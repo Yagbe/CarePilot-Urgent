@@ -37,12 +37,10 @@ def _agent_log(message: str, data: dict[str, Any], hypothesis_id: str = ""):
         Path(_DEBUG_LOG_PATH).parent.mkdir(parents=True, exist_ok=True)
         with open(_DEBUG_LOG_PATH, "a") as f:
             f.write(line)
-    except Exception as e:
-        import sys
-        print(f"[CarePilot.debug] {message} | {hypothesis_id} | {data} | file_err={e}", file=sys.stderr, flush=True)
-    else:
-        import sys
-        print(f"[CarePilot.debug] {message} | {hypothesis_id}", file=sys.stderr, flush=True)
+    except Exception:
+        pass
+    import sys
+    print(f"[CarePilot.debug] {message} | {hypothesis_id} | {data}", file=sys.stdout, flush=True)
 # #endregion
 
 import qrcode
