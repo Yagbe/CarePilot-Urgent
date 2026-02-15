@@ -74,7 +74,8 @@ export function KioskCamera() {
           URL.revokeObjectURL(url);
           onEnd?.();
         };
-        audio.onerror = () => {
+        audio.onerror = (e) => {
+          console.warn("[CarePilot] OpenAI TTS playback failed, using browser voice", e);
           URL.revokeObjectURL(url);
           if ("speechSynthesis" in window) {
             const u = new SpeechSynthesisUtterance(text);
@@ -85,10 +86,15 @@ export function KioskCamera() {
           }
         };
         await audio.play();
+        if (typeof console !== "undefined" && console.debug) {
+          console.debug("[CarePilot] Voice: OpenAI TTS (tts-1-hd)");
+        }
         return;
       }
-    } catch {
-      /* fallback below */
+    } catch (err) {
+      if (typeof console !== "undefined" && console.debug) {
+        console.debug("[CarePilot] Voice: browser fallback (TTS request failed)", err);
+      }
     }
     if ("speechSynthesis" in window) {
       const u = new SpeechSynthesisUtterance(text);

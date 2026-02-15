@@ -1832,6 +1832,12 @@ def api_ai_speak(body: SpeakRequest):
         raise HTTPException(502, "TTS failed")
 
 
+@app.get("/api/ai/tts-available")
+def api_ai_tts_available():
+    """Whether OpenAI TTS is available (so frontend can show or use it)."""
+    return {"available": bool(OPENAI_API_KEY)}
+
+
 @app.get("/api/ai/status")
 def api_ai_status():
     """Diagnostic: see what the deployed app sees for AI (no secrets). Compare local vs production."""
@@ -1844,6 +1850,9 @@ def api_ai_status():
         "openai_key_set": bool(OPENAI_API_KEY),
         "openai_key_len": len(OPENAI_API_KEY),
         "openai_model": OPENAI_MODEL,
+        "tts_available": bool(OPENAI_API_KEY),
+        "tts_voice": OPENAI_TTS_VOICE,
+        "tts_model": OPENAI_TTS_MODEL,
     }
 
 
