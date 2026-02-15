@@ -1106,6 +1106,7 @@ Rules:
 
 
 def _ai_chat_reply(user_text: str) -> dict[str, Any]:
+    """Chat replies come only from Google Gemini. Red-flag phrases get a fixed safety message."""
     text = (user_text or "").strip()
     low = text.lower()
     red_flags = [f for f in RED_FLAG_KEYWORDS if f in low]
@@ -1115,27 +1116,18 @@ def _ai_chat_reply(user_text: str) -> dict[str, Any]:
             "Please alert clinic staff now for immediate support."
         )
         return {"reply": reply, "red_flags": red_flags}
-    # Use Gemini whenever API key is set (ignore AI_PROVIDER so Gemini is always used if key present)
-    if GEMINI_API_KEY:
-        gemini_reply = _gemini_generate(AI_CHAT_SYSTEM_PROMPT, text)
-        if gemini_reply:
-            return {"reply": gemini_reply, "red_flags": []}
-    # Fallback: rule-based (when Gemini unavailable or key not set)
-    if "language" in low or "arabic" in low:
-        reply = "We can support multilingual intake. Please choose your preferred language on this kiosk."
-    elif "sensor" in low or "finger" in low:
-        reply = "Please place one finger on the sensor, keep still, and wait for confirmation."
-    elif "help" in low or "wait" in low or "where" in low:
-        reply = (
-            "I'm here to help. You can ask about wait times (check the screen or ask staff), "
-            "where the waiting room or restroom is, or how to use the vitals sensor. For anything urgent, please tell a staff member."
-        )
-    else:
-        reply = (
-            "I can help with check-in, wait times, wayfinding, and sensor steps. "
-            "What would you like to know? For anything urgent, please alert staff."
-        )
-    return {"reply": reply, "red_flags": []}
+    if not GEMINI_API_KEY:
+        return {
+            "reply": "The AI assistant is not configured (missing GEMINI_API_KEY). Please ask a staff member.",
+            "red_flags": [],
+        }
+    gemini_reply = _gemini_generate(AI_CHAT_SYSTEM_PROMPT, text)
+    if gemini_reply:
+        return {"reply": gemini_reply, "red_flags": []}
+    return {
+        "reply": "The AI assistant is temporarily unavailable. Please try again in a moment or ask a staff member.",
+        "red_flags": [],
+    }
 
 
 # -----------------------------------------------------------------------------
