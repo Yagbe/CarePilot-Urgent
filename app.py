@@ -19,6 +19,7 @@ import threading
 import time
 import uuid
 import sqlite3
+import urllib.request
 from collections import deque
 from datetime import datetime, timedelta
 from pathlib import Path
@@ -98,10 +99,11 @@ CAMERA_PIPELINE = os.getenv("CAMERA_PIPELINE", "").strip()
 DB_PATH = os.getenv("DB_PATH", str(Path(__file__).resolve().parent / "carepilot.db"))
 DEMO_MODE_FLAG = os.getenv("DEMO_MODE", "0") == "1"
 USE_SIMULATED_VITALS = os.getenv("USE_SIMULATED_VITALS", "1") == "1"
-AI_PROVIDER = os.getenv("AI_PROVIDER", "openai").lower()
+AI_PROVIDER = os.getenv("AI_PROVIDER", "gemini").lower()
 OPENAI_API_KEY = os.getenv("OPENAI_API_KEY", "").strip()
 # Gemini: use GOOGLE_API_KEY (official SDK) or GEMINI_API_KEY
 GEMINI_API_KEY = os.getenv("GOOGLE_API_KEY", "").strip() or os.getenv("GEMINI_API_KEY", "").strip()
+GEMINI_MODEL = os.getenv("GEMINI_MODEL", "gemini-1.5-flash").strip() or "gemini-1.5-flash"
 patients: dict[str, dict[str, Any]] = {}
 queue_order: list[str] = []
 provider_count = 1
@@ -1037,6 +1039,55 @@ def _lobby_load_score() -> dict[str, Any]:
     return {"level": level, "queue_size": q, "updated_at": datetime.utcnow().isoformat()}
 
 
+def _gemini_generate(system_instruction: str, user_text: str) -> Optional[str]:
+    """Call Gemini API (REST). Returns generated text or None on error."""
+    if not GEMINI_API_KEY:
+        return None
+    url = f"https://generativelanguage.googleapis.com/v1beta/models/{GEMINI_MODEL}:generateContent"
+    payload = {
+        "systemInstruction": {"parts": [{"text": system_instruction}]},
+        "contents": [{"parts": [{"text": user_text}]}],
+        "generationConfig": {
+            "temperature": 0.3,
+            "maxOutputTokens": 512,
+            "topP": 0.95,
+        },
+    }
+    try:
+        data = json.dumps(payload).encode("utf-8")
+        req = urllib.request.Request(
+            url,
+            data=data,
+            headers={
+                "Content-Type": "application/json",
+                "x-goog-api-key": GEMINI_API_KEY,
+            },
+            method="POST",
+        )
+        with urllib.request.urlopen(req, timeout=15) as resp:
+            out = json.loads(resp.read().decode("utf-8"))
+        cand = out.get("candidates") or []
+        if not cand:
+            return None
+        parts = (cand[0].get("content") or {}).get("parts") or []
+        if not parts:
+            return None
+        return (parts[0].get("text") or "").strip()
+    except Exception:
+        return None
+
+
+AI_CHAT_SYSTEM_PROMPT = """You are CarePilot, an AI medical kiosk assistant at an urgent care clinic. You are friendly and helpful but strictly non-diagnostic.
+
+Rules:
+- Only help with: check-in steps, wait times, wayfinding (e.g. waiting room, restroom), sensor/vitals instructions, and general workflow questions.
+- Do not give medical advice, diagnose, or interpret symptoms. If someone describes serious symptoms (chest pain, difficulty breathing, etc.), tell them to alert clinic staff immediately.
+- Keep replies short (1–3 sentences). Speak as if to a patient at a kiosk.
+- For wait time: say you don't have real-time wait data and they can check the screen or ask staff.
+- For language/translation: say the kiosk can support multiple languages and they can choose on screen.
+- For sensors/vitals: say to place one finger on the sensor and hold still until they see confirmation."""
+
+
 def _ai_chat_reply(user_text: str) -> dict[str, Any]:
     text = (user_text or "").strip()
     low = text.lower()
@@ -1046,7 +1097,14 @@ def _ai_chat_reply(user_text: str) -> dict[str, Any]:
             "I am an operational assistant, not a medical advisor. "
             "Please alert clinic staff now for immediate support."
         )
-    elif "language" in low or "arabic" in low:
+        return {"reply": reply, "red_flags": red_flags}
+    # Prefer Gemini when key is set
+    if GEMINI_API_KEY and AI_PROVIDER == "gemini":
+        gemini_reply = _gemini_generate(AI_CHAT_SYSTEM_PROMPT, text)
+        if gemini_reply:
+            return {"reply": gemini_reply, "red_flags": []}
+    # Fallback: rule-based
+    if "language" in low or "arabic" in low:
         reply = "We can support multilingual intake. Please choose your preferred language on this kiosk."
     elif "sensor" in low or "finger" in low:
         reply = "Please place one finger on the sensor, keep still, and wait for confirmation."
@@ -1055,7 +1113,7 @@ def _ai_chat_reply(user_text: str) -> dict[str, Any]:
             "I can help with check-in steps and workflow only. "
             "Please share symptoms duration and any mobility assistance needs."
         )
-    return {"reply": reply, "red_flags": red_flags}
+    return {"reply": reply, "red_flags": []}
 
 
 # -----------------------------------------------------------------------------
