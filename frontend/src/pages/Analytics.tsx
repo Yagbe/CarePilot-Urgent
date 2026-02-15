@@ -15,11 +15,13 @@ import {
 } from "recharts";
 
 const CHART_COLORS = {
-  arrivals: "hsl(var(--chart-1, 199 89% 48%))",
-  wait: "hsl(var(--chart-2, 38 92% 50%))",
-  grid: "hsl(var(--border) / 0.4)",
+  arrivals: "hsl(var(--chart-1))",
+  wait: "hsl(var(--chart-2))",
+  grid: "hsl(var(--border))",
+  axis: "hsl(var(--muted-foreground))",
   tooltipBg: "hsl(var(--card))",
   tooltipBorder: "hsl(var(--border))",
+  chartBg: "hsl(var(--muted) / 0.2)",
 };
 
 function buildChartData(forecast: AnalyticsData["forecast"] | undefined) {
@@ -135,10 +137,10 @@ export function Analytics() {
             <CardHeader>
               <CardTitle className="text-base">Predicted arrivals (next 2h)</CardTitle>
               <CardContent className="pt-2">
-                <div className="h-[280px] w-full">
+                <div className="h-[280px] w-full rounded-lg bg-muted/20 p-3">
                   {chartData.length > 0 ? (
                     <ResponsiveContainer width="100%" height="100%">
-                      <AreaChart data={chartData} margin={{ top: 8, right: 8, left: 0, bottom: 0 }}>
+                      <AreaChart data={chartData} margin={{ top: 8, right: 8, left: 8, bottom: 24 }}>
                         <defs>
                           <linearGradient id="arrivalsGradient" x1="0" y1="0" x2="0" y2="1">
                             <stop offset="0%" stopColor={CHART_COLORS.arrivals} stopOpacity={0.4} />
@@ -148,15 +150,16 @@ export function Analytics() {
                         <CartesianGrid strokeDasharray="3 3" stroke={CHART_COLORS.grid} vertical={false} />
                         <XAxis
                           dataKey="name"
-                          tick={{ fontSize: 11, fill: "hsl(var(--muted-foreground))" }}
-                          axisLine={{ stroke: "hsl(var(--border))" }}
-                          tickLine={false}
+                          tick={{ fontSize: 12, fill: CHART_COLORS.axis }}
+                          axisLine={{ stroke: CHART_COLORS.grid }}
+                          tickLine={{ stroke: CHART_COLORS.grid }}
                         />
                         <YAxis
-                          tick={{ fontSize: 11, fill: "hsl(var(--muted-foreground))" }}
+                          tick={{ fontSize: 12, fill: CHART_COLORS.axis }}
                           axisLine={false}
-                          tickLine={false}
+                          tickLine={{ stroke: CHART_COLORS.grid }}
                           tickFormatter={(v) => String(v)}
+                          width={28}
                         />
                         <Tooltip
                           contentStyle={{
@@ -191,10 +194,10 @@ export function Analytics() {
             <CardHeader>
               <CardTitle className="text-base">Predicted wait (min)</CardTitle>
               <CardContent className="pt-2">
-                <div className="h-[280px] w-full">
+                <div className="h-[280px] w-full rounded-lg bg-muted/20 p-3">
                   {chartData.length > 0 ? (
                     <ResponsiveContainer width="100%" height="100%">
-                      <AreaChart data={chartData} margin={{ top: 8, right: 8, left: 0, bottom: 0 }}>
+                      <AreaChart data={chartData} margin={{ top: 8, right: 8, left: 8, bottom: 24 }}>
                         <defs>
                           <linearGradient id="waitGradient" x1="0" y1="0" x2="0" y2="1">
                             <stop offset="0%" stopColor={CHART_COLORS.wait} stopOpacity={0.4} />
@@ -204,15 +207,16 @@ export function Analytics() {
                         <CartesianGrid strokeDasharray="3 3" stroke={CHART_COLORS.grid} vertical={false} />
                         <XAxis
                           dataKey="name"
-                          tick={{ fontSize: 11, fill: "hsl(var(--muted-foreground))" }}
-                          axisLine={{ stroke: "hsl(var(--border))" }}
-                          tickLine={false}
+                          tick={{ fontSize: 12, fill: CHART_COLORS.axis }}
+                          axisLine={{ stroke: CHART_COLORS.grid }}
+                          tickLine={{ stroke: CHART_COLORS.grid }}
                         />
                         <YAxis
-                          tick={{ fontSize: 11, fill: "hsl(var(--muted-foreground))" }}
+                          tick={{ fontSize: 12, fill: CHART_COLORS.axis }}
                           axisLine={false}
-                          tickLine={false}
-                          tickFormatter={(v) => `${v} min`}
+                          tickLine={{ stroke: CHART_COLORS.grid }}
+                          tickFormatter={(v) => `${v}`}
+                          width={32}
                         />
                         <Tooltip
                           contentStyle={{
@@ -248,10 +252,10 @@ export function Analytics() {
           <CardHeader>
             <CardTitle className="text-base">Arrivals vs wait (combined)</CardTitle>
             <CardContent className="pt-2">
-              <div className="h-[300px] w-full">
+              <div className="h-[300px] w-full rounded-lg bg-muted/20 p-3">
                 {chartData.length > 0 ? (
                   <ResponsiveContainer width="100%" height="100%">
-                    <AreaChart data={chartData} margin={{ top: 8, right: 48, left: 0, bottom: 0 }}>
+                    <AreaChart data={chartData} margin={{ top: 8, right: 44, left: 8, bottom: 24 }}>
                       <defs>
                         <linearGradient id="arrivalsCombo" x1="0" y1="0" x2="0" y2="1">
                           <stop offset="0%" stopColor={CHART_COLORS.arrivals} stopOpacity={0.3} />
@@ -265,25 +269,27 @@ export function Analytics() {
                       <CartesianGrid strokeDasharray="3 3" stroke={CHART_COLORS.grid} vertical={false} />
                       <XAxis
                         dataKey="name"
-                        tick={{ fontSize: 11, fill: "hsl(var(--muted-foreground))" }}
-                        axisLine={{ stroke: "hsl(var(--border))" }}
-                        tickLine={false}
+                        tick={{ fontSize: 12, fill: CHART_COLORS.axis }}
+                        axisLine={{ stroke: CHART_COLORS.grid }}
+                        tickLine={{ stroke: CHART_COLORS.grid }}
                       />
                       <YAxis
                         yAxisId="arrivals"
-                        tick={{ fontSize: 11, fill: "hsl(var(--muted-foreground))" }}
+                        tick={{ fontSize: 12, fill: CHART_COLORS.axis }}
                         axisLine={false}
-                        tickLine={false}
-                        label={{ value: "Arrivals", angle: -90, position: "insideLeft", style: { fontSize: 11 } }}
+                        tickLine={{ stroke: CHART_COLORS.grid }}
+                        width={28}
+                        label={{ value: "Arrivals", angle: -90, position: "insideLeft", style: { fontSize: 11, fill: CHART_COLORS.axis } }}
                       />
                       <YAxis
                         yAxisId="wait"
                         orientation="right"
-                        tick={{ fontSize: 11, fill: "hsl(var(--muted-foreground))" }}
+                        tick={{ fontSize: 12, fill: CHART_COLORS.axis }}
                         axisLine={false}
-                        tickLine={false}
-                        tickFormatter={(v) => `${v}m`}
-                        label={{ value: "Wait (min)", angle: 90, position: "insideRight", style: { fontSize: 11 } }}
+                        tickLine={{ stroke: CHART_COLORS.grid }}
+                        tickFormatter={(v) => `${v}`}
+                        width={32}
+                        label={{ value: "Wait (min)", angle: 90, position: "insideRight", style: { fontSize: 11, fill: CHART_COLORS.axis } }}
                       />
                       <Tooltip
                         contentStyle={{

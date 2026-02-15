@@ -21,6 +21,8 @@
     --radius: 0.75rem;
     --accent: 210 30% 94%;
     --accent-foreground: 210 30% 18%;
+    --chart-1: 199 89% 48%;
+    --chart-2: 38 92% 50%;
   }
   .dark {
     --background: 210 30% 8%;
