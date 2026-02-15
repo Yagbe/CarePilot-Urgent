@@ -50,7 +50,6 @@ export function KioskCamera() {
   const recognitionRef = useRef<{ start: () => void; abort: () => void } | null>(null);
   const announcedWaitRef = useRef(false);
   const [autoVitals, setAutoVitals] = useState<VitalsReading | null>(null);
-  const [showManualVitals, setShowManualVitals] = useState(false);
   const [triageResult, setTriageResult] = useState<TriageResult | null>(null);
   const greetedRef = useRef(false);
   const triageSpokenRef = useRef(false);
@@ -58,7 +57,6 @@ export function KioskCamera() {
   const [chatInput, setChatInput] = useState("");
   const [chatSending, setChatSending] = useState(false);
   const chatEndRef = useRef<HTMLDivElement>(null);
-  const sensorBridgeUrlRef = useRef<string | null>(null);
   const [kioskStep, setKioskStep] = useState<KioskStep>("scan");
   const AI_NAME = "CarePilot";
 
@@ -145,17 +143,6 @@ export function KioskCamera() {
     [playNextInQueue]
   );
 
-  useEffect(() => {
-    fetch("/api/config", { credentials: "same-origin" })
-      .then((r) => r.json())
-      .then((d) => {
-        const url = d?.sensor_bridge_url ?? null;
-        sensorBridgeUrlRef.current =
-          url && typeof url === "string" && url.trim() ? url.trim().replace(/\/$/, "") : null;
-      })
-      .catch(() => {});
-  }, []);
-
   const submitCode = useCallback(async (code: string, fromCamera: boolean) => {
     if (!code.trim()) return;
     setSubmitting(true);
@@ -171,24 +158,11 @@ export function KioskCamera() {
         });
         setKioskStep("vitals");
         setAutoVitals(null);
-        setShowManualVitals(false);
         setTriageResult(null);
         greetedRef.current = false;
         triageSpokenRef.current = false;
         triageRequestedRef.current = false;
         beep();
-        // Notify sensor bridge only when server config has SENSOR_BRIDGE_URL set (avoids localhost:9999 errors when bridge not used)
-        const base = sensorBridgeUrlRef.current;
-        if (base) {
-          const ac = new AbortController();
-          const t = setTimeout(() => ac.abort(), 800);
-          fetch(`${base}/current-token`, {
-            method: "POST",
-            headers: { "Content-Type": "application/json" },
-            body: JSON.stringify({ token: res.token }),
-            signal: ac.signal,
-          }).catch(() => {}).finally(() => clearTimeout(t));
-        }
         if (fromCamera) {
           setScanningEnabled(false);
           cooldownUntilRef.current = Date.now() + 3000;
@@ -320,12 +294,12 @@ export function KioskCamera() {
     }
   };
 
-  // On vitals step: say hello and ask them to use the sensor (once after check-in)
+  // On vitals step: say hello and ask them to enter vitals (once after check-in)
   useEffect(() => {
     if (!successCard || kioskStep !== "vitals" || greetedRef.current) return;
     greetedRef.current = true;
     const msg =
-      "Hello, and welcome. Please place your finger on the sensor and hold still. We'll have your readings in just a moment.";
+      "Hello, and welcome. Please enter your vital signs in the form below. You can use readings from an external monitor or have staff enter them.";
     speakWithTts(msg);
   }, [successCard, kioskStep, speakWithTts]);
 
@@ -383,7 +357,6 @@ export function KioskCamera() {
   const handleSessionDone = () => {
     setSuccessCard(null);
     setAutoVitals(null);
-    setShowManualVitals(false);
     setTriageResult(null);
     setScanningEnabled(true);
     setStatus("Scanning for QR…");
@@ -396,25 +369,6 @@ export function KioskCamera() {
     triageSpokenRef.current = false;
     triageRequestedRef.current = false;
   };
-
-  // Poll for vitals when patient is checked in (sensors auto-submit to API)
-  useEffect(() => {
-    if (!successCard?.token) return;
-    let cancelled = false;
-    const poll = () => {
-      getVitalsByToken(successCard.token)
-        .then((r) => {
-          if (!cancelled && r.vitals) setAutoVitals(r.vitals);
-        })
-        .catch(() => {});
-    };
-    poll();
-    const t = setInterval(poll, 2000);
-    return () => {
-      cancelled = true;
-      clearInterval(t);
-    };
-  }, [successCard?.token]);
 
   return (
     <>
@@ -507,16 +461,17 @@ export function KioskCamera() {
               <CardHeader>
                 <CardTitle className="flex items-center justify-center gap-2 text-base">
                   <Activity className="h-5 w-5" />
-                  Vitals (from sensors)
+                  Vitals
                 </CardTitle>
                 <CardContent className="pt-0">
-                  {!autoVitals && (
-                    <p className="text-muted-foreground text-sm py-4">
-                      Collecting vitals from sensors… The system will record them automatically. No need to enter anything.
-                    </p>
-                  )}
+                  <p className="text-muted-foreground text-sm py-2">
+                    Enter readings from your external monitor or have staff enter them.
+                  </p>
+                  <div className="max-w-md mx-auto mt-2">
+                    <VitalsForm token={successCard.token} onSuccess={() => getVitalsByToken(successCard.token).then((r) => r.vitals && setAutoVitals(r.vitals))} />
+                  </div>
                   {autoVitals && (
-                    <div className="grid grid-cols-2 sm:grid-cols-4 gap-3 py-2">
+                    <div className="grid grid-cols-2 sm:grid-cols-4 gap-3 py-4 mt-4 border-t border-border">
                       {autoVitals.spo2 != null && (
                         <div className="rounded-lg bg-muted/50 p-3">
                           <p className="text-muted-foreground text-xs">SpO2</p>
@@ -541,20 +496,6 @@ export function KioskCamera() {
                           <p className="text-xl font-bold">{autoVitals.bp_sys ?? "—"} / {autoVitals.bp_dia ?? "—"}</p>
                         </div>
                       )}
-                    </div>
-                  )}
-                  <Button
-                    type="button"
-                    variant="ghost"
-                    size="sm"
-                    className="mt-2 text-muted-foreground"
-                    onClick={() => setShowManualVitals((v) => !v)}
-                  >
-                    {showManualVitals ? "Hide manual entry" : "Enter manually if sensors didn’t work"}
-                  </Button>
-                  {showManualVitals && (
-                    <div className="mt-4 max-w-md mx-auto">
-                      <VitalsForm token={successCard.token} onSuccess={() => getVitalsByToken(successCard.token).then((r) => r.vitals && setAutoVitals(r.vitals))} />
                     </div>
                   )}
                 </CardContent>
