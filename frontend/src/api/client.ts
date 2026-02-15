@@ -1,4 +1,7 @@
-const API = "";
+/** In dev with Vite proxy, use "". In production or standalone frontend, set VITE_API_URL to backend origin. */
+const API = typeof import.meta !== "undefined" && import.meta.env?.VITE_API_URL != null
+  ? String(import.meta.env.VITE_API_URL).replace(/\/$/, "")
+  : "";
 
 export async function postIntake(body: {
   first_name: string;
