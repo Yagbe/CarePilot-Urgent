@@ -320,7 +320,16 @@ export function KioskCamera() {
     }
   };
 
-  // Run triage only after we have vitals (so AI can "look at vitals" and decide emergency)
+  // On vitals step: say hello and ask them to use the sensor (once after check-in)
+  useEffect(() => {
+    if (!successCard || kioskStep !== "vitals" || greetedRef.current) return;
+    greetedRef.current = true;
+    const msg =
+      "Hello, and welcome. Please place your finger on the sensor and hold still. We'll have your readings in just a moment.";
+    speakWithTts(msg);
+  }, [successCard, kioskStep, speakWithTts]);
+
+  // Run triage only after we have vitals (so we can say if vitals look good/bad/emergency)
   useEffect(() => {
     if (!successCard?.token || triageRequestedRef.current) return;
     if (!autoVitals) return;
@@ -343,22 +352,29 @@ export function KioskCamera() {
       });
   }, [successCard?.token, kioskStep, triageResult]);
 
-  // Speak only on chat step: no AI speech on vitals step. First speak triage (emergency or not), then wait time.
+  // When vitals are in and triage is done: say if vitals look good, need attention, or emergency (on vitals or chat step)
   useEffect(() => {
-    if (!successCard || kioskStep !== "chat" || !triageResult || triageSpokenRef.current) return;
+    if (!successCard || !triageResult || triageSpokenRef.current) return;
+    if (kioskStep !== "vitals" && kioskStep !== "chat") return;
     triageSpokenRef.current = true;
-    const msg = triageResult.ai_script;
+    const msg =
+      triageResult.priority === "high"
+        ? triageResult.ai_script
+        : triageResult.priority === "medium"
+          ? "Your vitals need a bit of attention. A nurse may check in with you. Please have a seat in the waiting room and we'll call you when it's your turn."
+          : "Your vitals look good. Please have a seat in the waiting room. We'll call you when it's your turn.";
     if (msg) speakWithTts(msg);
   }, [successCard, kioskStep, triageResult, speakWithTts]);
 
-  // After triage spoken on chat step, announce wait time once (medium/low only)
+  // After triage spoken, announce wait time once (medium/low only), on vitals or chat step
   useEffect(() => {
-    if (!successCard || kioskStep !== "chat" || !triageResult || announcedWaitRef.current || triageResult.priority === "high") return;
+    if (!successCard || !triageResult || announcedWaitRef.current || triageResult.priority === "high") return;
+    if (kioskStep !== "vitals" && kioskStep !== "chat") return;
     announcedWaitRef.current = true;
     const id = setTimeout(() => {
       const mins = successCard.estimated_wait_min;
       const waitText = mins <= 0 ? "a short time" : `${mins} minute${mins !== 1 ? "s" : ""}`;
-      const msg = `Your estimated wait is ${waitText}. If you have any questions, ask me now.`;
+      const msg = `Your estimated wait is ${waitText}. When you're ready, tap Continue to chat if you have any questions.`;
       speakWithTts(msg);
     }, 4000);
     return () => clearTimeout(id);
