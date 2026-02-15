@@ -1205,7 +1205,8 @@ Rules:
 - Keep replies short (1–3 sentences). Speak as if to a patient at a kiosk.
 - For wait time: say you don't have real-time wait data and they can check the screen or ask staff.
 - For language/translation: say the kiosk can support multiple languages and they can choose on screen.
-- For sensors/vitals: say to place one finger on the sensor and hold still until they see confirmation."""
+- When the patient asks for THEIR vitals or "what are my numbers": if vitals are provided below, read them back in a friendly sentence (e.g. "Your latest readings are ..."). Do not interpret or diagnose. If no vitals are provided below, say to place one finger on the sensor and hold still until they see confirmation.
+- For general sensor instructions (when they're not asking for their own readings): say to place one finger on the sensor and hold still until they see confirmation."""
 
 
 def _format_vitals_context(v: Optional[dict[str, Any]]) -> str:
@@ -1240,7 +1241,7 @@ def _ai_chat_reply(user_text: str, vitals_context: Optional[str] = None) -> dict
 
     system_prompt = AI_CHAT_SYSTEM_PROMPT
     if vitals_context:
-        system_prompt += "\n\nCurrent patient's vitals (reference only; do not diagnose): " + vitals_context
+        system_prompt += "\n\n[Patient's vitals - read these back if they ask for their vitals; do not interpret or diagnose] " + vitals_context
 
     if AI_PROVIDER == "openai":
         # #region agent log
