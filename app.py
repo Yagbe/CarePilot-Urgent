@@ -1047,69 +1047,66 @@ def _gemini_generate(system_instruction: str, user_text: str) -> Optional[str]:
     """Call Gemini API (REST). Returns generated text or None on error."""
     if not GEMINI_API_KEY:
         return None
-    # Try models in order; first success wins
     models_to_try = [GEMINI_MODEL, "gemini-1.5-flash", "gemini-1.5-flash-latest", "gemini-pro"]
     seen = set()
     last_error: Optional[str] = None
+    # Build prompt with instruction inline (fallback when systemInstruction not supported)
+    inline_prompt = f"{system_instruction}\n\nUser: {user_text}\n\nAssistant:"
     for model in models_to_try:
         if not model or model in seen:
             continue
         seen.add(model)
         url = f"https://generativelanguage.googleapis.com/v1beta/models/{model}:generateContent?key={GEMINI_API_KEY}"
-        payload = {
-            "systemInstruction": {"parts": [{"text": system_instruction}]},
-            "contents": [{"parts": [{"text": user_text}]}],
-            "generationConfig": {
-                "temperature": 0.3,
-                "maxOutputTokens": 512,
-                "topP": 0.95,
-            },
-        }
-        try:
-            data = json.dumps(payload).encode("utf-8")
-            req = urllib.request.Request(
-                url,
-                data=data,
-                headers={"Content-Type": "application/json"},
-                method="POST",
-            )
-            with urllib.request.urlopen(req, timeout=25) as resp:
-                out = json.loads(resp.read().decode("utf-8"))
-            err = out.get("error")
-            if err:
-                last_error = str(err)
-                if APP_ENV != "production":
-                    print(f"Gemini [{model}] error: {err}", flush=True)
-                continue
-            cand = out.get("candidates") or []
-            if not cand:
-                if APP_ENV != "production":
-                    print(f"Gemini [{model}] no candidates: {list(out.keys())}", flush=True)
-                continue
-            c0 = cand[0]
-            block = (c0.get("finishReason") or c0.get("finish_reason") or "").lower()
-            if block and block in ("block", "safety", "recitation"):
-                continue
-            content = c0.get("content") or {}
-            parts = content.get("parts") or []
-            if not parts:
-                continue
-            text = parts[0].get("text") or parts[0].get("Text") or ""
-            if text and isinstance(text, str):
-                return text.strip()
-        except urllib.error.HTTPError as e:
-            body = ""
+        for use_system in (True, False):  # try with systemInstruction, then without
+            payload = {
+                "contents": [{"parts": [{"text": inline_prompt if not use_system else user_text}]}],
+                "generationConfig": {"temperature": 0.3, "maxOutputTokens": 512, "topP": 0.95},
+            }
+            if use_system:
+                payload["systemInstruction"] = {"parts": [{"text": system_instruction}]}
             try:
-                body = e.read().decode("utf-8") if e.fp else ""
-            except Exception:
-                pass
-            last_error = f"HTTP {e.code}: {body[:300]}"
-            if APP_ENV != "production":
-                print(f"Gemini [{model}] {last_error}", flush=True)
-        except Exception as e:
-            last_error = str(e)
-            if APP_ENV != "production":
-                print(f"Gemini [{model}] failed: {e}", flush=True)
+                data = json.dumps(payload).encode("utf-8")
+                req = urllib.request.Request(
+                    url, data=data, headers={"Content-Type": "application/json"}, method="POST"
+                )
+                with urllib.request.urlopen(req, timeout=25) as resp:
+                    out = json.loads(resp.read().decode("utf-8"))
+                err = out.get("error")
+                if err:
+                    last_error = str(err)
+                    print(f"[CarePilot] Gemini [{model}] API error: {err}", flush=True)
+                    break
+                cand = out.get("candidates") or []
+                if not cand:
+                    last_error = "no candidates in response"
+                    print(f"[CarePilot] Gemini [{model}] no candidates. Keys: {list(out.keys())}", flush=True)
+                    break
+                c0 = cand[0]
+                block = (c0.get("finishReason") or c0.get("finish_reason") or "").lower()
+                if block and block in ("block", "safety", "recitation"):
+                    last_error = f"blocked ({block})"
+                    break
+                content = c0.get("content") or {}
+                parts = content.get("parts") or []
+                if not parts:
+                    last_error = "no parts in candidate"
+                    break
+                text = parts[0].get("text") or parts[0].get("Text") or ""
+                if text and isinstance(text, str):
+                    return text.strip()
+            except urllib.error.HTTPError as e:
+                body = ""
+                try:
+                    body = e.read().decode("utf-8") if e.fp else ""
+                except Exception:
+                    pass
+                last_error = f"HTTP {e.code}: {body[:400]}"
+                print(f"[CarePilot] Gemini [{model}] {last_error}", flush=True)
+                break
+            except Exception as e:
+                last_error = str(e)
+                print(f"[CarePilot] Gemini [{model}] failed: {e}", flush=True)
+                break
     return None
 
 
