@@ -1721,6 +1721,17 @@ def api_ai_chat(request: Request, pid: str = Form(""), message: str = Form(""), 
     }
 
 
+@app.get("/api/ai/status")
+def api_ai_status():
+    """Diagnostic: see what the deployed app sees for Gemini (no secrets). Compare local vs production."""
+    return {
+        "key_set": bool(GEMINI_API_KEY),
+        "key_len": len(GEMINI_API_KEY),
+        "gemini_model": GEMINI_MODEL,
+        "env": APP_ENV,
+    }
+
+
 @app.get("/api/lobby-load")
 def api_lobby_load():
     return _lobby_load_score()
