@@ -56,7 +56,7 @@ cp .env.example .env
 | `CAMERA_INDEX` | Webcam device index for kiosk | `0` |
 | `CAM_W`, `CAM_H` | Camera resolution | `1280`, `720` |
 | `CAMERA_PIPELINE` | Optional GStreamer pipeline (Jetson) | see Jetson section |
-| `GEMINI_API_KEY` or `GOOGLE_API_KEY` | Gemini API key (optional) | from Google AI Studio |
+| `GEMINI_API_KEY` | Gemini API key (set in .env) | from Google AI Studio |
 | `DEMO_MODE` | Show demo badge | `0` or `1` |
 | `USE_SIMULATED_VITALS` | Allow simulated vitals | `1` |
 

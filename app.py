@@ -102,8 +102,8 @@ DEMO_MODE_FLAG = os.getenv("DEMO_MODE", "0") == "1"
 USE_SIMULATED_VITALS = os.getenv("USE_SIMULATED_VITALS", "1") == "1"
 AI_PROVIDER = os.getenv("AI_PROVIDER", "gemini").lower()
 OPENAI_API_KEY = os.getenv("OPENAI_API_KEY", "").strip()
-# Gemini: use GOOGLE_API_KEY (official SDK) or GEMINI_API_KEY
-GEMINI_API_KEY = os.getenv("GOOGLE_API_KEY", "").strip() or os.getenv("GEMINI_API_KEY", "").strip()
+# Gemini: key must be set in .env as GEMINI_API_KEY (no hardcoded keys)
+GEMINI_API_KEY = os.getenv("GEMINI_API_KEY", "").strip()
 GEMINI_MODEL = os.getenv("GEMINI_MODEL", "gemini-1.5-flash").strip() or "gemini-1.5-flash"
 # Optional: when set, kiosk will POST check-in token here (sensor bridge / token receiver). Leave unset to avoid localhost:9999 requests.
 SENSOR_BRIDGE_URL = (os.getenv("SENSOR_BRIDGE_URL", "").strip() or "").rstrip("/")
