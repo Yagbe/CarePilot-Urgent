@@ -27,17 +27,22 @@ from pathlib import Path
 from typing import Any, Optional
 
 # #region agent log
-DEBUG_LOG_PATH = Path(__file__).resolve().parent / ".cursor" / "debug.log"
+_DEBUG_LOG_PATH = "/Users/kayal/CarePilot/.cursor/debug.log"
 def _agent_log(message: str, data: dict[str, Any], hypothesis_id: str = ""):
+    payload = {"message": message, "data": data, "timestamp": int(time.time() * 1000)}
+    if hypothesis_id:
+        payload["hypothesisId"] = hypothesis_id
+    line = json.dumps(payload) + "\n"
     try:
-        payload = {"message": message, "data": data, "timestamp": int(time.time() * 1000)}
-        if hypothesis_id:
-            payload["hypothesisId"] = hypothesis_id
-        DEBUG_LOG_PATH.parent.mkdir(parents=True, exist_ok=True)
-        with open(DEBUG_LOG_PATH, "a") as f:
-            f.write(json.dumps(payload) + "\n")
-    except Exception:
-        pass
+        Path(_DEBUG_LOG_PATH).parent.mkdir(parents=True, exist_ok=True)
+        with open(_DEBUG_LOG_PATH, "a") as f:
+            f.write(line)
+    except Exception as e:
+        import sys
+        print(f"[CarePilot.debug] {message} | {hypothesis_id} | {data} | file_err={e}", file=sys.stderr, flush=True)
+    else:
+        import sys
+        print(f"[CarePilot.debug] {message} | {hypothesis_id}", file=sys.stderr, flush=True)
 # #endregion
 
 import qrcode
