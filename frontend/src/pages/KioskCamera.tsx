@@ -6,10 +6,10 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { postKioskCheckin, postAiChat, getAiSpeech, getVitalsByToken, getTriage, type VitalsReading, type TriageResult } from "@/api/client";
 import { motion } from "framer-motion";
-import { Mic, Activity, LayoutDashboard, Heart, MessageCircle, Info } from "lucide-react";
+import { Mic, Activity } from "lucide-react";
 import { VitalsForm } from "@/components/vitals/VitalsForm";
 
-type KioskPage = "overview" | "vitals" | "chat" | "info";
+type KioskStep = "scan" | "vitals" | "chat";
 
 function beep() {
   const Ctx = window.AudioContext || (window as unknown as { webkitAudioContext?: typeof AudioContext }).webkitAudioContext;
@@ -59,15 +59,8 @@ export function KioskCamera() {
   const [chatSending, setChatSending] = useState(false);
   const chatEndRef = useRef<HTMLDivElement>(null);
   const sensorBridgeUrlRef = useRef<string | null>(null);
-  const [kioskPage, setKioskPage] = useState<KioskPage>("overview");
+  const [kioskStep, setKioskStep] = useState<KioskStep>("scan");
   const AI_NAME = "CarePilot";
-
-  const kioskTabs: { id: KioskPage; label: string; icon: React.ReactNode }[] = [
-    { id: "overview", label: "Overview", icon: <LayoutDashboard className="h-4 w-4" /> },
-    { id: "vitals", label: "Vitals", icon: <Heart className="h-4 w-4" /> },
-    { id: "chat", label: "Chat", icon: <MessageCircle className="h-4 w-4" /> },
-    { id: "info", label: "Info", icon: <Info className="h-4 w-4" /> },
-  ];
 
   const speechQueueRef = useRef<{ text: string; onEnd?: () => void }[]>([]);
   const isPlayingSpeechRef = useRef(false);
@@ -176,6 +169,7 @@ export function KioskCamera() {
           estimated_wait_min: res.estimated_wait_min ?? 0,
           display_name: res.display_name,
         });
+        setKioskStep("vitals");
         setAutoVitals(null);
         setShowManualVitals(false);
         setTriageResult(null);
@@ -374,7 +368,7 @@ export function KioskCamera() {
     return () => clearTimeout(id);
   }, [successCard, triageResult, speakWithTts]);
 
-  const handleNextPatient = () => {
+  const handleSessionDone = () => {
     setSuccessCard(null);
     setAutoVitals(null);
     setShowManualVitals(false);
@@ -382,7 +376,9 @@ export function KioskCamera() {
     setScanningEnabled(true);
     setStatus("Scanning for QR…");
     setTranscript([]);
+    setChatInput("");
     setRedFlagAlert(false);
+    setKioskStep("scan");
     announcedWaitRef.current = false;
     greetedRef.current = false;
     triageSpokenRef.current = false;
@@ -412,81 +408,59 @@ export function KioskCamera() {
     <>
       <Topbar />
       <main className="mx-auto flex max-w-4xl flex-col items-center space-y-4 px-4 py-4">
-        {/* Small top bar: code entry + status */}
-        <div className="flex w-full max-w-2xl flex-wrap items-center justify-center gap-3 rounded-lg border border-border bg-muted/30 px-4 py-3">
-          <form
-            className="flex items-center gap-2"
-            onSubmit={(e) => {
-              e.preventDefault();
-              submitCode(manualCode, false);
-            }}
-          >
-            <Label htmlFor="manual-code" className="sr-only">Token or code</Label>
-            <Input
-              id="manual-code"
-              value={manualCode}
-              onChange={(e) => setManualCode(e.target.value)}
-              placeholder="UC-1234 or code"
-              className="max-w-[200px] font-mono"
-            />
-            <Button type="submit" disabled={submitting} size="sm">
-              {submitting ? "…" : "Check In"}
-            </Button>
-          </form>
-          <span className="text-sm text-muted-foreground">{status}</span>
-        </div>
+        {/* Step 1: QR scan — show until check-in */}
+        {!successCard && (
+          <>
+            <div className="flex w-full max-w-2xl flex-wrap items-center justify-center gap-3 rounded-lg border border-border bg-muted/30 px-4 py-3">
+              <form
+                className="flex items-center gap-2"
+                onSubmit={(e) => {
+                  e.preventDefault();
+                  submitCode(manualCode, false);
+                }}
+              >
+                <Label htmlFor="manual-code" className="sr-only">Token or code</Label>
+                <Input
+                  id="manual-code"
+                  value={manualCode}
+                  onChange={(e) => setManualCode(e.target.value)}
+                  placeholder="UC-1234 or code"
+                  className="max-w-[200px] font-mono"
+                />
+                <Button type="submit" disabled={submitting} size="sm">
+                  {submitting ? "…" : "Check In"}
+                </Button>
+              </form>
+              <span className="text-sm text-muted-foreground">{status}</span>
+            </div>
+            <Card className="w-full max-w-2xl">
+              <CardContent className="p-0 flex justify-center">
+                <img
+                  src="/camera/stream"
+                  alt="Point QR code at camera"
+                  className="h-auto w-full rounded-lg border-0 border-border object-contain max-h-[50vh] sm:max-h-[60vh]"
+                />
+              </CardContent>
+              <p className="px-4 pb-2 text-center text-muted-foreground text-xs">Scan your QR code or enter your token above.</p>
+            </Card>
+          </>
+        )}
 
-        {/* Largest: QR camera */}
-        <Card className="w-full max-w-2xl">
-          <CardContent className="p-0 flex justify-center">
-            <img
-              src="/camera/stream"
-              alt="Point QR code at camera"
-              className="h-auto w-full rounded-lg border-0 border-border object-contain max-h-[50vh] sm:max-h-[60vh]"
-            />
-          </CardContent>
-          <p className="px-4 pb-2 text-center text-muted-foreground text-xs">Scan your QR code or enter your token above.</p>
-        </Card>
-
-        {/* Only after check-in: tabbed pages */}
-        {successCard && (
+        {/* Step 2: Vitals — after check-in, before chat */}
+        {successCard && kioskStep === "vitals" && (
           <motion.div
             initial={{ opacity: 0 }}
             animate={{ opacity: 1 }}
             className="w-full max-w-2xl space-y-4 text-center"
           >
-            {/* Tab bar */}
-            <div className="flex flex-wrap justify-center gap-1 rounded-lg border border-border bg-muted/30 p-1">
-              {kioskTabs.map((tab) => (
-                <Button
-                  key={tab.id}
-                  type="button"
-                  variant={kioskPage === tab.id ? "secondary" : "ghost"}
-                  size="sm"
-                  className="gap-1.5"
-                  onClick={() => setKioskPage(tab.id)}
-                >
-                  {tab.icon}
-                  {tab.label}
-                </Button>
-              ))}
-            </div>
-
-            {/* Overview page */}
-            {kioskPage === "overview" && (
-              <div className="space-y-4">
             <div className="rounded-lg border-l-4 border-green-600 bg-green-50 p-4 dark:bg-green-950">
               <p className="text-lg font-bold text-green-900 dark:text-green-100">✓ You're checked in</p>
               {successCard.display_name && (
                 <p className="text-green-800 dark:text-green-200">Welcome, <strong>{successCard.display_name}</strong>.</p>
               )}
               <p className="font-mono text-xl font-bold text-green-800 dark:text-green-200">{successCard.token}</p>
-              <p className="text-green-800 dark:text-green-200">Estimated wait: <strong>{successCard.estimated_wait_min} min</strong>. Watch the waiting room screen for your token.</p>
-              <Button type="button" variant="secondary" size="sm" className="mt-2" onClick={handleNextPatient}>
-                Next patient
-              </Button>
+              <p className="text-green-800 dark:text-green-200 text-sm">Estimated wait: <strong>{successCard.estimated_wait_min} min</strong>. Next: collect your vitals below.</p>
             </div>
-
             {triageResult && (
               <div
                 className={`rounded-lg border-l-4 p-4 ${
@@ -517,11 +491,6 @@ export function KioskCamera() {
                 </p>
               </div>
             )}
-              </div>
-            )}
-
-            {/* Vitals page */}
-            {kioskPage === "vitals" && (
             <Card className="text-center">
               <CardHeader>
                 <CardTitle className="flex items-center justify-center gap-2 text-base">
@@ -579,10 +548,26 @@ export function KioskCamera() {
                 </CardContent>
               </CardHeader>
             </Card>
-            )}
+            <Button type="button" size="lg" className="w-full max-w-xs" onClick={() => setKioskStep("chat")}>
+              Continue to chat
+            </Button>
+          </motion.div>
+        )}
 
-            {/* Chat page */}
-            {kioskPage === "chat" && (
+        {/* Step 3: Chat — then Session done back to scan */}
+        {successCard && kioskStep === "chat" && (
+          <motion.div
+            initial={{ opacity: 0 }}
+            animate={{ opacity: 1 }}
+            className="w-full max-w-2xl space-y-4 text-center"
+          >
+            <div className="rounded-lg border border-border bg-muted/30 px-4 py-2 flex items-center justify-between flex-wrap gap-2">
+              <span className="text-sm text-muted-foreground">
+                <span className="font-mono font-bold text-foreground">{successCard.token}</span>
+                {" · "}
+                Chat with {AI_NAME}
+              </span>
+            </div>
             <Card>
               <CardHeader>
                 <CardTitle className="text-base">Chat with {AI_NAME} — ask wait time, wayfinding, or workflow</CardTitle>
@@ -645,31 +630,9 @@ export function KioskCamera() {
                 </CardContent>
               </CardHeader>
             </Card>
-            )}
-
-            {/* Info page */}
-            {kioskPage === "info" && (
-              <Card className="text-left">
-                <CardHeader>
-                  <CardTitle className="text-base">Help &amp; wayfinding</CardTitle>
-                </CardHeader>
-                <CardContent className="space-y-4 text-sm">
-                  <div>
-                    <p className="font-medium text-foreground">Waiting room</p>
-                    <p className="text-muted-foreground">Watch the main screen for your token. When it’s called, go to the front desk.</p>
-                  </div>
-                  <div>
-                    <p className="font-medium text-foreground">Restrooms</p>
-                    <p className="text-muted-foreground">Down the hall to the left, then follow the signs.</p>
-                  </div>
-                  <div>
-                    <p className="font-medium text-foreground">Water &amp; vending</p>
-                    <p className="text-muted-foreground">Available in the main waiting area.</p>
-                  </div>
-                  <p className="text-muted-foreground pt-2">Need help now? Raise your hand or speak to any staff member.</p>
-                </CardContent>
-              </Card>
-            )}
+            <Button type="button" variant="secondary" size="lg" className="w-full max-w-xs" onClick={handleSessionDone}>
+              Session done — next customer
+            </Button>
           </motion.div>
         )}
       </main>
