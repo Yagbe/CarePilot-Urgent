@@ -669,12 +669,15 @@ def _forecast(provider_override: Optional[int] = None) -> dict[str, Any]:
     avg_duration = 20
     current_items = _staff_queue_items()
     current_peak = max([i["estimated_wait_min"] for i in current_items], default=0)
-    future_wait = [max(0, int(current_peak + (sum(arrivals[:i + 1]) * avg_duration / max(providers, 1)) - i * 8)) for i in range(len(arrivals))]
-    with STATE_LOCK:
-        pc = max(provider_count, 1)
-    drop_to = max(0, int(max(future_wait) * pc / max(providers, 1)))
-    if max(future_wait) > 45:
-        recommendation = f"Add 1 provider for next peak window; projected peak drops to ~{drop_to} min."
+    prov = max(providers, 1)
+    future_wait = [max(0, int(current_peak + (sum(arrivals[:i + 1]) * avg_duration / prov) - i * 8)) for i in range(len(arrivals))]
+    peak_with_current = max(future_wait) if future_wait else 0
+    # If we recommend adding a provider, show projected peak *with* one more provider
+    prov_plus_one = prov + 1
+    future_wait_plus_one = [max(0, int(current_peak + (sum(arrivals[:i + 1]) * avg_duration / prov_plus_one) - i * 8)) for i in range(len(arrivals))]
+    peak_with_extra = max(future_wait_plus_one) if future_wait_plus_one else 0
+    if peak_with_current > 45:
+        recommendation = f"Add 1 provider for next peak window; projected peak drops to ~{peak_with_extra} min."
     else:
         recommendation = "Current staffing appears stable for projected arrivals."
     labels = [(datetime.utcnow() + timedelta(minutes=15 * i)).strftime("%H:%M") for i in range(8)]
