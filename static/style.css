@@ -428,3 +428,44 @@ ul {
   .kiosk-input { font-size: 1.5rem; }
   .a11y-bar { padding-left: 1rem; padding-right: 1rem; }
 }
+
+.priority { padding:14px; border-radius:12px; border:1px solid rgba(255,255,255,0.15); background:rgba(0,0,0,0.35); }
+.priority-label { opacity:0.8; font-size:12px; margin-bottom:6px; }
+.priority-value { font-size:18px; font-weight:700; }
+.priority-reason { opacity:0.85; margin-top:6px; font-size:13px; }
+
+.priority.high { border-color: rgba(255,0,0,0.45); box-shadow: 0 0 22px rgba(255,0,0,0.18); }
+.priority.medium { border-color: rgba(255,140,0,0.45); box-shadow: 0 0 22px rgba(255,140,0,0.16); }
+.priority.low { border-color: rgba(255,255,0,0.35); box-shadow: 0 0 22px rgba(255,255,0,0.10); }
+
+
+
+/* Voice assistant (kiosk camera page) */
+.ai-voice-row{
+  display:flex;
+  align-items:center;
+  gap:10px;
+  margin-top:10px;
+  flex-wrap:wrap;
+}
+.ai-voice-row .hint{
+  opacity:0.75;
+  font-size:12px;
+}
+.ai-transcript{
+  margin-top:10px;
+  padding:10px 12px;
+  border-radius:12px;
+  border:1px solid rgba(0,255,255,0.18);
+  background: rgba(0,0,0,0.35);
+  font-size:13px;
+  opacity:0.9;
+}
+.btn.btn-secondary{
+  background: rgba(255,255,255,0.08);
+  color:#fff;
+  border:1px solid rgba(255,255,255,0.12);
+}
+.btn.btn-secondary:hover{
+  background: rgba(255,255,255,0.14);
+}

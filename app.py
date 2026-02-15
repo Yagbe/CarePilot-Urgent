@@ -37,6 +37,23 @@ from dotenv import load_dotenv
 load_dotenv()
 
 # -----------------------------------------------------------------------------
+# Optional: local speech-to-text (ML) using faster-whisper for kiosk voice
+# -----------------------------------------------------------------------------
+try:
+    from faster_whisper import WhisperModel  # type: ignore
+except Exception:
+    WhisperModel = None  # type: ignore
+
+VOICE_MODEL = None
+if WhisperModel is not None:
+    try:
+        # Tiny = fastest; CPU int8 is usually fine for kiosk demos
+        VOICE_MODEL = WhisperModel("tiny", device="cpu", compute_type="int8")
+    except Exception:
+        VOICE_MODEL = None
+
+
+# -----------------------------------------------------------------------------
 # JSON API request models (for React / Best UI/UX stack)
 # -----------------------------------------------------------------------------
 class IntakeRequest(BaseModel):
@@ -121,6 +138,47 @@ def _db_conn() -> sqlite3.Connection:
 
 
 DB_CONN = _db_conn()
+
+
+def triage_priority_from_vitals(v: dict) -> tuple[str, str]:
+    """
+    Returns: (priority_level, reason)
+    priority_level: "high" | "medium" | "low"
+    """
+    if not v:
+        return ("medium", "No vitals received yet.")
+
+    spo2 = v.get("spo2")
+    hr = v.get("hr")
+    temp = v.get("temp_c")
+    sys = v.get("bp_sys")
+    dia = v.get("bp_dia")
+
+    # HIGH (red) - obvious danger thresholds (simple hackathon rules)
+    if spo2 is not None and spo2 < 92:
+        return ("high", f"Low oxygen saturation (SpO2 {spo2}).")
+    if hr is not None and (hr > 130 or hr < 45):
+        return ("high", f"Abnormal heart rate (HR {hr}).")
+    if sys is not None and sys > 180:
+        return ("high", f"Very high blood pressure (SYS {sys}).")
+    if sys is not None and sys < 90:
+        return ("high", f"Low blood pressure (SYS {sys}).")
+    if temp is not None and temp >= 39.4:
+        return ("high", f"High fever (Temp {temp}C).")
+
+    # MEDIUM (orange)
+    if spo2 is not None and 92 <= spo2 <= 94:
+        return ("medium", f"Borderline oxygen saturation (SpO2 {spo2}).")
+    if hr is not None and (110 <= hr <= 130):
+        return ("medium", f"Elevated heart rate (HR {hr}).")
+    if temp is not None and (38.0 <= temp < 39.4):
+        return ("medium", f"Fever (Temp {temp}C).")
+    if sys is not None and (140 <= sys <= 180):
+        return ("medium", f"Elevated blood pressure (SYS {sys}).")
+
+    # LOW (yellow)
+    return ("low", "Vitals within expected range.")
+
 
 
 def _init_db() -> None:
@@ -244,7 +302,7 @@ class CameraManager:
         if self.pipeline:
             cap = cv2.VideoCapture(self.pipeline, cv2.CAP_GSTREAMER)
         else:
-            cap = cv2.VideoCapture(self.index)
+            cap = cv2.VideoCapture(self.index, cv2.CAP_V4L2)
         if not cap.isOpened():
             hint = " On macOS: grant Camera access to Terminal (or Python) in System Preferences → Privacy & Security → Camera."
             raise RuntimeError(f"Unable to open camera ({self.pipeline or self.index}).{hint}")
@@ -1236,11 +1294,18 @@ def camera_stream():
         return StreamingResponse(iter([body]), media_type="multipart/x-mixed-replace; boundary=" + boundary.decode())
 
     def frame_generator():
+        misses = 0
         while True:
             frame = manager.latest_jpeg()
             if frame:
+                misses = 0
                 yield b"--frame\r\nContent-Type: image/jpeg\r\n\r\n" + frame + b"\r\n"
+            else:
+                misses += 1
+                if misses % 50 == 0:
+                    print("camera_stream: no frames yet (latest_jpeg is None)")
             time.sleep(0.04)
+
 
     return StreamingResponse(frame_generator(), media_type="multipart/x-mixed-replace; boundary=frame")
 
@@ -1318,6 +1383,14 @@ async def api_vitals_submit(
             ),
         )
         DB_CONN.commit()
+        
+    v_now = _latest_vitals_for_pid(resolved_pid) or {}
+    level, reason = triage_priority_from_vitals(v_now)
+    with STATE_LOCK:
+        if resolved_pid in patients:
+            patients[resolved_pid]["triage_priority"] = level
+            patients[resolved_pid]["triage_reason"] = reason
+
     _audit("vitals_submit", {"pid": resolved_pid, "token": p.get("token"), "device_id": device_id})
     await _broadcast_queue_update()
     return {"ok": True, "pid": resolved_pid, "token": p.get("token"), "ts": vitals_ts}
@@ -1369,15 +1442,15 @@ def api_vitals_pid(request: Request, pid: str):
 
 @app.get("/api/vitals/by-token")
 def api_vitals_by_token(token: str = ""):
-    """Public: return latest vitals for patient by token (for kiosk to show auto-collected vitals)."""
     code = (token or "").strip()
     if not code:
         raise HTTPException(400, "token is required.")
     resolved_pid = _resolve_code(code)
     if not resolved_pid:
         raise HTTPException(404, "Patient not found.")
-    v = _latest_vitals_for_pid(resolved_pid)
-    return {"ok": True, "vitals": v}
+    v = _latest_vitals_for_pid(resolved_pid) or {}
+    level, reason = triage_priority_from_vitals(v)
+    return {"ok": True, "vitals": v, "priority": level, "priority_reason": reason, "pid": resolved_pid}
 
 
 @app.post("/api/vitals/simulate")
@@ -1432,6 +1505,88 @@ def api_ai_chat(request: Request, pid: str = Form(""), message: str = Form(""), 
         "reply": out["reply"],
         "red_flags": out["red_flags"],
     }
+
+# -----------------------------------------------------------------------------
+# Voice (ML STT) + kiosk assistant helpers
+# -----------------------------------------------------------------------------
+from fastapi import UploadFile, File  # noqa: E402 (import after optional deps)
+
+@app.post("/voice/transcribe")
+async def voice_transcribe(file: UploadFile = File(...)):
+    """Transcribe an audio upload using faster-whisper (ML)."""
+    if VOICE_MODEL is None:
+        raise HTTPException(status_code=503, detail="Voice model not available on this server.")
+    suffix = Path(file.filename or "").suffix or ".wav"
+    tmp_path = f"/tmp/{uuid.uuid4().hex}{suffix}"
+    with open(tmp_path, "wb") as f:
+        f.write(await file.read())
+
+    try:
+        segments, _info = VOICE_MODEL.transcribe(tmp_path)
+        text_out = " ".join(seg.text for seg in segments).strip()
+    finally:
+        try:
+            os.remove(tmp_path)
+        except Exception:
+            pass
+    return {"text": text_out}
+
+
+@app.post("/voice/respond")
+def voice_respond(pid: str = Form(""), token: str = Form(""), message: str = Form("")):
+    """Return an operational (non-diagnostic) assistant reply for kiosk voice."""
+    text = (message or "").strip()
+    if not text:
+        raise HTTPException(400, "Message is required.")
+    out = _ai_chat_reply(text)
+
+    resolved_pid = _resolve_code(pid or token) if (pid or token) else None
+    try:
+        with STATE_LOCK:
+            DB_CONN.execute(
+                "INSERT INTO ai_conversations(pid, role, message, ts) VALUES(?,?,?,?)",
+                (resolved_pid or "", "patient", text, datetime.utcnow().isoformat()),
+            )
+            DB_CONN.execute(
+                "INSERT INTO ai_conversations(pid, role, message, ts) VALUES(?,?,?,?)",
+                (resolved_pid or "", "assistant", out["reply"], datetime.utcnow().isoformat()),
+            )
+            DB_CONN.commit()
+    except Exception:
+        pass
+
+    return {"ok": True, "non_diagnostic": True, "reply": out["reply"], "red_flags": out.get("red_flags", [])}
+
+
+@app.get("/api/triage/by-token")
+def api_triage_by_token(token: str = ""):
+    """Return priority (HIGH/MED/LOW) from latest vitals for a token/pid."""
+    code = (token or "").strip()
+    if not code:
+        raise HTTPException(400, "token is required.")
+    resolved_pid = _resolve_code(code)
+    if not resolved_pid:
+        raise HTTPException(404, "Patient not found.")
+    v = _latest_vitals_for_pid(resolved_pid)
+    if not v:
+        return {"ok": False, "priority": "UNKNOWN", "reason": "No vitals yet.", "vitals": None}
+
+    priority, reason = triage_priority_from_vitals(v)
+    if priority == "HIGH":
+        action = "High priority. Staff alerted. Please remain at the kiosk; a clinician is coming."
+    elif priority == "MED":
+        action = "Medium priority. Please proceed to the waiting area. Staff will call you shortly."
+    else:
+        action = "Low priority. Please proceed to the waiting area. Staff will call you when ready."
+
+    try:
+        _audit("triage_priority", {"pid": resolved_pid, "token": v.get("token"), "priority": priority, "reason": reason})
+        _queue_event("triage_priority", pid=resolved_pid, token=v.get("token", ""), payload={"priority": priority, "reason": reason})
+    except Exception:
+        pass
+
+    return {"ok": True, "priority": priority, "reason": reason, "action": action, "vitals": v}
+
 
 
 @app.get("/api/lobby-load")

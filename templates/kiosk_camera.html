@@ -76,6 +76,19 @@
       </div>
       <div id="transcript" class="table-like" style="margin-top:.7rem;"></div>
     </div>
+    
+    <div class="ai-assistant">
+      <div class="ai-title">AI Voice Assistant</div>
+    
+      <div id="aiStatus" class="ai-status">Waiting for QR scan…</div>
+    
+      <div id="priorityBox" class="priority low" style="margin-top:12px;">
+        <div class="priority-label">Priority</div>
+        <div id="priorityValue" class="priority-value">—</div>
+        <div id="priorityReason" class="priority-reason">—</div>
+      </div>
+    </div>
+
   </main>
 
   <script>
@@ -164,8 +177,28 @@
           fd.append('code', code);
           const r = await fetch('/api/kiosk-checkin', { method: 'POST', body: fd });
           const data = await r.json();
+
+          // If backend says cooldown, silently ignore camera resubmits (no scary UI)
+          if (String(data.message || '').toLowerCase().includes('cooldown')) {
+            // keep scanning enabled; don't change status to cooldown error
+            return;
+          }
+
           if (data.ok && data.checked_in) {
             showSuccess(data);
+
+            // ✅ IMPORTANT FIX:
+            // Trigger AI flow ONLY AFTER successful check-in (so we DO NOT hit /api/kiosk-checkin twice).
+            // This prevents: "Scan cooldown active. Please wait 3 seconds."
+            if (window.CarePilotAIVoice && typeof window.CarePilotAIVoice.startFromCheckin === 'function') {
+              window.CarePilotAIVoice.startFromCheckin({
+                scanValue: code,
+                token: data.token || '',
+                estimated_wait_min: data.estimated_wait_min || 0,
+                display_name: data.display_name || ''
+              });
+            }
+
             scanningEnabled = false;
             cooldownUntil = Date.now() + 3000;
             setStatus('Checked in. Scan paused for 3 seconds...');
@@ -186,7 +219,7 @@
       async function pollLastScan() {
         if (!scanningEnabled || submitting || Date.now() < cooldownUntil) return;
         try {
-          const r = await fetch('/api/camera/last-scan');
+          const r = await fetch('/api/camera/last-scan', { cache: "no-store" });
           if (!r.ok) return;
           const data = await r.json();
           const v = String(data.value || '').trim();
@@ -242,6 +275,164 @@
       setStatus('Scanning for QR...');
     })();
   </script>
+  
+  <script>
+/**
+ * Kiosk AI Voice Flow (sequential)
+ * - MUST NOT re-checkin (cooldown spam). We start ONLY after the main kiosk check-in succeeds.
+ * - speaks steps via SpeechSynthesis
+ * - waits for vitals from /api/vitals/by-token (your sensors/simulated vitals can fill this)
+ */
+
+(function(){
+  const AI_NAME = "Astra"; // change name here
+  let flowBusy = false;
+  let lastFlowToken = "";
+  let muted = false;
+
+  function $(id){ return document.getElementById(id); }
+
+  function setAIStatus(t){ if($("aiStatus")) $("aiStatus").innerText = t; }
+
+  function setPriority(level, reason){
+    const box = $("priorityBox");
+    const v = $("priorityValue");
+    const r = $("priorityReason");
+    if(!box || !v || !r) return;
+
+    box.classList.remove("high","medium","low");
+    box.classList.add(level);
+
+    const pretty = level === "high" ? "HIGH (RED)"
+                 : level === "medium" ? "MEDIUM (ORANGE)"
+                 : "LOW (YELLOW)";
+
+    v.innerText = pretty;
+    r.innerText = reason || "—";
+  }
+
+  function speak(text){
+    if(muted) return;
+    try{
+      if(!("speechSynthesis" in window)) return;
+      window.speechSynthesis.cancel();
+      const u = new SpeechSynthesisUtterance(text);
+      u.rate = 1.02;
+      u.pitch = 1.0;
+      window.speechSynthesis.speak(u);
+    } catch(e){}
+  }
+
+  function sleep(ms){ return new Promise(r => setTimeout(r, ms)); }
+
+  async function waitForVitalsAndTriage(token, timeoutMs=20000){
+    const start = Date.now();
+    while(Date.now() - start < timeoutMs){
+      const url = `/api/vitals/by-token?token=${encodeURIComponent(token)}`;
+      const res = await fetch(url, { method:"GET", cache:"no-store" });
+      const data = await res.json();
+
+      if(data && data.ok){
+        const v = data.vitals || {};
+        const hasVitals =
+          v.spo2 != null || v.hr != null || v.temp_c != null || v.bp_sys != null || v.bp_dia != null;
+
+        if(hasVitals){
+          return data; // { ok:true, vitals: {...}, ... } + your server can add priority fields if you implement them
+        }
+      }
+      setAIStatus("Reading vital signs… (waiting for sensors)");
+      await sleep(900);
+    }
+    // timeout fallback
+    return { ok:true, vitals:{}, priority:"medium", priority_reason:"Vitals not received yet — staff will verify.", pid:"" };
+  }
+
+  async function startFromCheckin(payload){
+    // payload: {scanValue, token, estimated_wait_min, display_name}
+    const token = (payload && payload.token) ? String(payload.token) : "";
+    if(!token) return;
+
+    // prevent re-running for same token immediately
+    if(flowBusy) return;
+    if(token === lastFlowToken) return;
+
+    flowBusy = true;
+    lastFlowToken = token;
+
+    try{
+      setAIStatus("AI assistant active.");
+      setPriority("low", "—");
+
+      // 1) Greeting
+      await sleep(150);
+      speak(`Greetings. My name is ${AI_NAME} and I will be your AI medical assistant. Before we get started, I am going to take a look at your vital signs.`);
+
+      // 2) Wait for vitals
+      await sleep(900);
+      setAIStatus("Reading vital signs…");
+      const triage = await waitForVitalsAndTriage(token, 25000);
+
+      // 3) Determine priority (temporary logic until your backend adds real ML triage)
+      // If your backend returns triage.priority / triage.priority_reason, we will use them.
+      let level = (triage.priority || "").toLowerCase().trim();
+      let reason = triage.priority_reason || "";
+
+      if(level !== "high" && level !== "medium" && level !== "low"){
+        // Simple placeholder rule-set based on vitals (non-diagnostic operational prioritization)
+        const v = triage.vitals || {};
+        const spo2 = (v.spo2 != null) ? Number(v.spo2) : null;
+        const hr = (v.hr != null) ? Number(v.hr) : null;
+        const temp = (v.temp_c != null) ? Number(v.temp_c) : null;
+
+        // Default
+        level = "low";
+        reason = "Vitals appear within typical ranges (operational).";
+
+        if((spo2 != null && spo2 < 92) || (hr != null && (hr > 130 || hr < 45)) || (temp != null && temp >= 39.0)){
+          level = "high";
+          reason = "Potential urgent vitals pattern detected — clinician review needed now.";
+        } else if((spo2 != null && spo2 < 95) || (hr != null && (hr > 110 || hr < 55)) || (temp != null && temp >= 38.0)){
+          level = "medium";
+          reason = "Moderate vitals deviation — staff should review soon.";
+        }
+      }
+
+      setPriority(level, reason);
+
+      // 4) Speak next steps
+      if(level === "high"){
+        setAIStatus("HIGH priority — notifying staff.");
+        speak("Your priority level is high. You may be experiencing a serious emergency condition. A clinician is being notified now. Please remain here. A doctor is coming.");
+      } else if(level === "medium"){
+        setAIStatus("MEDIUM priority — proceed to waiting area.");
+        speak("Your priority level is medium. Please proceed to the waiting area and remain seated. Staff will call you soon.");
+      } else {
+        setAIStatus("LOW priority — proceed to waiting area.");
+        speak("Your priority level is low. Please proceed to the waiting area and wait to be called.");
+      }
+
+    } catch(e){
+      console.error(e);
+      setAIStatus("AI flow error: " + (e.message || "unknown"));
+      speak("Sorry, something went wrong. Please ask staff for help.");
+    } finally {
+      flowBusy = false;
+    }
+  }
+
+  // expose to the main scan script
+  window.CarePilotAIVoice = {
+    startFromCheckin
+  };
+
+  window.addEventListener("load", () => {
+    setAIStatus("Waiting for QR scan…");
+    setPriority("low", "—");
+  });
+})();
+  </script>
+
   <script src="/static/ux.js"></script>
 </body>
 </html>
