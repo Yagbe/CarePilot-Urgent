@@ -1066,8 +1066,13 @@ def _gemini_generate(system_instruction: str, user_text: str) -> Optional[str]:
         )
         with urllib.request.urlopen(req, timeout=15) as resp:
             out = json.loads(resp.read().decode("utf-8"))
+        if out.get("error"):
+            return None
         cand = out.get("candidates") or []
         if not cand:
+            return None
+        block = cand[0].get("finishReason") or cand[0].get("finish_reason")
+        if block and str(block).lower() in ("block", "safety", "recitation"):
             return None
         parts = (cand[0].get("content") or {}).get("parts") or []
         if not parts:
@@ -1857,6 +1862,20 @@ def api_audit(request: Request):
 
 if _SPA_BUILD:
     _SPA_INDEX = str(_FRONTEND_DIST / "index.html")
+
+    @app.get("/favicon.svg", include_in_schema=False)
+    def favicon():
+        p = _FRONTEND_DIST / "favicon.svg"
+        if p.is_file():
+            return FileResponse(str(p), media_type="image/svg+xml")
+        return Response(status_code=204)
+
+    @app.get("/meta.json", include_in_schema=False)
+    def meta_json():
+        return Response(
+            content=json.dumps({"name": "CarePilot Urgent", "version": APP_VERSION}),
+            media_type="application/json",
+        )
 
     @app.get("/{path:path}", response_class=HTMLResponse)
     def spa_serve(request: Request, path: str):

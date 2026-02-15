@@ -53,6 +53,9 @@ export function KioskCamera() {
   const greetedRef = useRef(false);
   const triageSpokenRef = useRef(false);
   const triageRequestedRef = useRef(false);
+  const [chatInput, setChatInput] = useState("");
+  const [chatSending, setChatSending] = useState(false);
+  const chatEndRef = useRef<HTMLDivElement>(null);
   const AI_NAME = "CarePilot";
 
   const submitCode = useCallback(async (code: string, fromCamera: boolean) => {
@@ -75,16 +78,15 @@ export function KioskCamera() {
         triageSpokenRef.current = false;
         triageRequestedRef.current = false;
         beep();
-        // Tell local sensor bridge (Nano) which patient to send vitals for
-        try {
-          await fetch("http://localhost:9999/current-token", {
-            method: "POST",
-            headers: { "Content-Type": "application/json" },
-            body: JSON.stringify({ token: res.token }),
-          });
-        } catch {
-          // Token receiver not running (e.g. not on Nano); sensors may use CAREPILOT_TOKEN manually
-        }
+        // Tell local sensor bridge (Nano) which patient to send vitals for (optional; ignore if not running)
+        const ac = new AbortController();
+        const t = setTimeout(() => ac.abort(), 800);
+        fetch("http://localhost:9999/current-token", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ token: res.token }),
+          signal: ac.signal,
+        }).catch(() => {}).finally(() => clearTimeout(t));
         if (fromCamera) {
           setScanningEnabled(false);
           cooldownUntilRef.current = Date.now() + 3000;
@@ -191,6 +193,32 @@ export function KioskCamera() {
   const startListening = () => {
     setRedFlagAlert(false);
     recognitionRef.current?.start();
+  };
+
+  const sendChatMessage = async () => {
+    const msg = chatInput.trim();
+    if (!msg || chatSending) return;
+    setChatInput("");
+    setTranscript((prev) => [...prev, { role: "user", text: msg }]);
+    setChatSending(true);
+    setRedFlagAlert(false);
+    try {
+      const data = await postAiChat(msg);
+      setTranscript((prev) => [...prev, { role: "assistant", text: data.reply ?? "No response." }]);
+      if (data.red_flags?.length) {
+        setRedFlagAlert(true);
+        beep();
+      }
+      if ("speechSynthesis" in window && data.reply) {
+        const u = new SpeechSynthesisUtterance(data.reply);
+        window.speechSynthesis.speak(u);
+      }
+      setTimeout(() => chatEndRef.current?.scrollIntoView({ behavior: "smooth" }), 100);
+    } catch {
+      setTranscript((prev) => [...prev, { role: "assistant", text: "Sorry, the AI assistant is unavailable. Please try again or ask staff." }]);
+    } finally {
+      setChatSending(false);
+    }
   };
 
   // Speak AI greeting once after check-in
@@ -432,37 +460,65 @@ export function KioskCamera() {
               </CardHeader>
             </Card>
 
-            <Card className="text-center">
+            <Card>
               <CardHeader>
-                <CardTitle className="text-base">Voice assistant — your wait time & questions</CardTitle>
-                <CardContent className="pt-0">
+                <CardTitle className="text-base">Chat with {AI_NAME} — ask wait time, wayfinding, or workflow</CardTitle>
+                <CardContent className="pt-0 space-y-3">
                   <p className="text-muted-foreground text-xs">
-                    Ask about your wait time or anything else. If emergency symptoms, alert staff immediately.
+                    Type or use the mic. Non-diagnostic only. Emergency symptoms? Alert staff immediately.
                   </p>
-                  <div className="mt-3 flex flex-wrap items-center justify-center gap-2">
-                    <Button type="button" onClick={startListening} disabled={voiceState === "listening"}>
-                      <Mic className="mr-2 h-4 w-4" />
-                      {voiceState === "listening" ? "Listening…" : "Ask a question"}
+                  <div className="rounded-lg border border-border bg-muted/20 min-h-[140px] max-h-[220px] overflow-y-auto p-3 space-y-2">
+                    {transcript.length === 0 && (
+                      <p className="text-muted-foreground text-sm">Ask anything—e.g. &quot;Where is the waiting room?&quot; or &quot;How long is the wait?&quot;</p>
+                    )}
+                    {transcript.map((b, i) => (
+                      <div
+                        key={i}
+                        className={`rounded-lg p-2 text-sm ${
+                          b.role === "assistant"
+                            ? "bg-primary/10 ml-0 mr-4"
+                            : "bg-muted ml-4 mr-0 text-right"
+                        }`}
+                      >
+                        <span className="font-medium text-xs opacity-80">{b.role === "assistant" ? AI_NAME : "You"}</span>
+                        <p className="mt-0.5">{b.text}</p>
+                      </div>
+                    ))}
+                    {chatSending && (
+                      <div className="rounded-lg p-2 text-sm bg-primary/10 text-primary-foreground ml-0 mr-4">
+                        <span className="font-medium text-xs opacity-80">{AI_NAME}</span>
+                        <p className="mt-0.5 text-muted-foreground">…</p>
+                      </div>
+                    )}
+                    <div ref={chatEndRef} />
+                  </div>
+                  <div className="flex flex-wrap items-center gap-2">
+                    <Input
+                      placeholder="Type your question…"
+                      value={chatInput}
+                      onChange={(e) => setChatInput(e.target.value)}
+                      onKeyDown={(e) => e.key === "Enter" && sendChatMessage()}
+                      disabled={chatSending}
+                      className="flex-1 min-w-[160px]"
+                    />
+                    <Button type="button" onClick={sendChatMessage} disabled={chatSending || !chatInput.trim()}>
+                      {chatSending ? "…" : "Send"}
                     </Button>
-                    <span className="rounded-full bg-muted px-2 py-1 text-xs font-medium">
+                    <Button type="button" variant="outline" size="icon" onClick={startListening} disabled={voiceState === "listening" || chatSending} title="Voice">
+                      <Mic className="h-4 w-4" />
+                    </Button>
+                    <span className="rounded-full bg-muted px-2 py-1 text-xs">
                       {voiceState === "idle" && "Idle"}
-                      {voiceState === "listening" && "Listening"}
-                      {voiceState === "processing" && "Processing"}
+                      {voiceState === "listening" && "Listening…"}
+                      {voiceState === "processing" && "Processing…"}
                       {voiceState === "speaking" && "Speaking"}
                     </span>
                   </div>
                   {redFlagAlert && (
-                    <div className="mt-3 rounded-lg border-l-4 border-destructive bg-destructive/10 p-3 text-destructive font-medium">
+                    <div className="rounded-lg border-l-4 border-destructive bg-destructive/10 p-3 text-destructive font-medium text-sm">
                       Red-flag phrase detected. Please call staff now.
                     </div>
                   )}
-                  <div className="mt-3 space-y-2 max-h-32 overflow-y-auto">
-                    {transcript.map((b, i) => (
-                      <div key={i} className="rounded-lg border border-border bg-muted/30 p-2 text-sm">
-                        <strong>{b.role === "assistant" ? "Assistant" : "You"}:</strong> {b.text}
-                      </div>
-                    ))}
-                  </div>
                 </CardContent>
               </CardHeader>
             </Card>
