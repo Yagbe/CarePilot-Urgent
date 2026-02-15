@@ -27,14 +27,14 @@ from pathlib import Path
 from typing import Any, Optional
 
 # #region agent log
-_DEBUG_LOG_PATH = "/Users/kayal/CarePilot/.cursor/debug.log"
+_DEBUG_LOG_PATH = Path(__file__).resolve().parent / ".cursor" / "debug.log"
 def _agent_log(message: str, data: dict[str, Any], hypothesis_id: str = ""):
     payload = {"message": message, "data": data, "timestamp": int(time.time() * 1000)}
     if hypothesis_id:
         payload["hypothesisId"] = hypothesis_id
     line = json.dumps(payload) + "\n"
     try:
-        Path(_DEBUG_LOG_PATH).parent.mkdir(parents=True, exist_ok=True)
+        _DEBUG_LOG_PATH.parent.mkdir(parents=True, exist_ok=True)
         with open(_DEBUG_LOG_PATH, "a") as f:
             f.write(line)
     except Exception:
@@ -1686,6 +1686,9 @@ async def api_vitals_simulate(request: Request, pid: str = Form("")):
 
 @app.post("/api/ai/chat")
 def api_ai_chat(request: Request, pid: str = Form(""), message: str = Form(""), role: str = Form("patient")):
+    # #region agent log
+    _agent_log("api_ai_chat: request", {"message_preview": (message or "")[:80], "message_len": len((message or "").strip())}, "route")
+    # #endregion
     text = (message or "").strip()
     if not text:
         raise HTTPException(400, "Message is required.")
