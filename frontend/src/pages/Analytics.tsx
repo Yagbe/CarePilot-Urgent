@@ -1,54 +1,34 @@
-import { useEffect, useState, useRef } from "react";
+import { useEffect, useState } from "react";
 import { useNavigate } from "react-router-dom";
 import { StaffTopbar } from "@/components/layout/Topbar";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { getAnalytics, getLobbyLoad, getDemoMode, ApiError, type AnalyticsData } from "@/api/client";
+import {
+  AreaChart,
+  Area,
+  XAxis,
+  YAxis,
+  CartesianGrid,
+  Tooltip,
+  ResponsiveContainer,
+  Legend,
+} from "recharts";
 
-function drawLineChart(
-  canvas: HTMLCanvasElement | null,
-  labels: string[],
-  values: number[],
-  color: string
-) {
-  if (!canvas || !labels.length || !values.length) return;
-  const ctx = canvas.getContext("2d");
-  if (!ctx) return;
-  const w = canvas.width;
-  const h = canvas.height;
-  ctx.clearRect(0, 0, w, h);
-  ctx.fillStyle = "hsl(var(--card))";
-  ctx.fillRect(0, 0, w, h);
-  const pad = 30;
-  const max = Math.max(1, ...values);
-  const stepX = (w - pad * 2) / Math.max(1, values.length - 1);
+const CHART_COLORS = {
+  arrivals: "hsl(var(--chart-1, 199 89% 48%))",
+  wait: "hsl(var(--chart-2, 38 92% 50%))",
+  grid: "hsl(var(--border) / 0.4)",
+  tooltipBg: "hsl(var(--card))",
+  tooltipBorder: "hsl(var(--border))",
+};
 
-  ctx.strokeStyle = "hsl(var(--border))";
-  ctx.beginPath();
-  ctx.moveTo(pad, h - pad);
-  ctx.lineTo(w - pad, h - pad);
-  ctx.stroke();
-
-  ctx.strokeStyle = color;
-  ctx.lineWidth = 2;
-  ctx.beginPath();
-  values.forEach((v, i) => {
-    const x = pad + i * stepX;
-    const y = h - pad - (v / max) * (h - pad * 2);
-    if (i === 0) ctx.moveTo(x, y);
-    else ctx.lineTo(x, y);
-  });
-  ctx.stroke();
-
-  ctx.fillStyle = "hsl(var(--foreground))";
-  ctx.font = "11px sans-serif";
-  values.forEach((v, i) => {
-    const x = pad + i * stepX;
-    const y = h - pad - (v / max) * (h - pad * 2);
-    ctx.beginPath();
-    ctx.arc(x, y, 3, 0, Math.PI * 2);
-    ctx.fill();
-    if (labels[i]) ctx.fillText(labels[i], x - 14, h - 10);
-  });
+function buildChartData(forecast: AnalyticsData["forecast"] | undefined) {
+  if (!forecast?.labels?.length) return [];
+  return forecast.labels.map((label, i) => ({
+    name: label,
+    arrivals: forecast.arrivals[i] ?? 0,
+    wait: forecast.wait_projection[i] ?? 0,
+  }));
 }
 
 export function Analytics() {
@@ -57,8 +37,7 @@ export function Analytics() {
   const [providers, setProviders] = useState(1);
   const [data, setData] = useState<AnalyticsData | null>(null);
   const [lobby, setLobby] = useState({ level: "Low", queue_size: 0 });
-  const arrivalsRef = useRef<HTMLCanvasElement>(null);
-  const waitRef = useRef<HTMLCanvasElement>(null);
+  const chartData = buildChartData(data?.forecast);
 
   useEffect(() => {
     getDemoMode().then((d) => setDemoMode(d.demo_mode)).catch(() => {});
@@ -82,12 +61,6 @@ export function Analytics() {
     return () => clearInterval(t);
   }, [providers, navigate]);
 
-  useEffect(() => {
-    if (!data?.forecast) return;
-    drawLineChart(arrivalsRef.current, data.forecast.labels, data.forecast.arrivals, "#0ea5e9");
-    drawLineChart(waitRef.current, data.forecast.labels, data.forecast.wait_projection, "#f59e0b");
-  }, [data]);
-
   const lc = data?.lane_counts || {};
   const laneMix = `Fast ${lc.Fast ?? 0} • Standard ${lc.Standard ?? 0} • Complex ${lc.Complex ?? 0}`;
   const peak = data
@@ -97,9 +70,11 @@ export function Analytics() {
   return (
     <>
       <StaffTopbar demoMode={demoMode} />
-      <main className="mx-auto max-w-4xl space-y-6 px-4 py-6">
+      <main className="mx-auto max-w-5xl space-y-6 px-4 py-6">
         <h1 className="text-2xl font-bold">Operational Analytics</h1>
-        <p className="text-muted-foreground text-sm">Forecasting and what-if staffing impact for the next 2 hours.</p>
+        <p className="text-muted-foreground text-sm">
+          Forecasting and what-if staffing impact for the next 2 hours.
+        </p>
 
         <Card>
           <CardHeader>
@@ -111,72 +86,256 @@ export function Analytics() {
                 max={3}
                 value={providers}
                 onChange={(e) => setProviders(Number(e.target.value))}
-                className="w-full"
+                className="w-full accent-primary"
               />
-              <p className="text-muted-foreground text-sm">Provider count: <strong>{providers}</strong></p>
+              <p className="text-muted-foreground text-sm">
+                Provider count: <strong>{providers}</strong>
+              </p>
             </CardContent>
           </CardHeader>
         </Card>
 
-        <div className="grid gap-4 sm:grid-cols-3">
+        <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-4">
           <Card>
             <CardHeader>
               <CardTitle className="text-muted-foreground text-sm">Current Queue</CardTitle>
-              <span className="text-2xl font-bold">{data?.current_queue ?? 0}</span>
+              <span className="text-3xl font-bold tabular-nums">{data?.current_queue ?? 0}</span>
             </CardHeader>
           </Card>
           <Card>
             <CardHeader>
               <CardTitle className="text-muted-foreground text-sm">Current Avg Wait</CardTitle>
-              <span className="text-2xl font-bold">{data?.current_avg_wait ?? 0} min</span>
+              <span className="text-3xl font-bold tabular-nums">{data?.current_avg_wait ?? 0} min</span>
             </CardHeader>
           </Card>
           <Card>
             <CardHeader>
               <CardTitle className="text-muted-foreground text-sm">Predicted Peak Wait</CardTitle>
-              <span className="text-2xl font-bold">{peak} min</span>
+              <span className="text-3xl font-bold tabular-nums">{peak} min</span>
+            </CardHeader>
+          </Card>
+          <Card>
+            <CardHeader>
+              <CardTitle className="text-muted-foreground text-sm">Lobby</CardTitle>
+              <span className="text-2xl font-bold">{lobby.level}</span>
+              <span className="text-muted-foreground text-sm"> ({lobby.queue_size})</span>
             </CardHeader>
           </Card>
         </div>
 
         <Card>
           <CardHeader>
-            <CardTitle className="text-muted-foreground text-sm">Lobby Occupancy Score</CardTitle>
-            <span className="text-2xl font-bold">{lobby.level} ({lobby.queue_size})</span>
+            <CardTitle className="text-muted-foreground text-sm">Lane mix</CardTitle>
+            <p className="text-lg font-semibold">{laneMix}</p>
           </CardHeader>
         </Card>
 
-        <Card>
-          <CardHeader>
-            <CardTitle className="text-muted-foreground text-sm">Lane Routing Mix</CardTitle>
-            <span className="text-lg font-semibold">{laneMix}</span>
-          </CardHeader>
-        </Card>
-
-        <div className="grid gap-4 sm:grid-cols-2">
+        <div className="grid gap-6 lg:grid-cols-2">
           <Card>
             <CardHeader>
-              <CardTitle className="text-base">Predicted Arrivals (next 2h)</CardTitle>
+              <CardTitle className="text-base">Predicted arrivals (next 2h)</CardTitle>
+              <CardContent className="pt-2">
+                <div className="h-[280px] w-full">
+                  {chartData.length > 0 ? (
+                    <ResponsiveContainer width="100%" height="100%">
+                      <AreaChart data={chartData} margin={{ top: 8, right: 8, left: 0, bottom: 0 }}>
+                        <defs>
+                          <linearGradient id="arrivalsGradient" x1="0" y1="0" x2="0" y2="1">
+                            <stop offset="0%" stopColor={CHART_COLORS.arrivals} stopOpacity={0.4} />
+                            <stop offset="100%" stopColor={CHART_COLORS.arrivals} stopOpacity={0} />
+                          </linearGradient>
+                        </defs>
+                        <CartesianGrid strokeDasharray="3 3" stroke={CHART_COLORS.grid} vertical={false} />
+                        <XAxis
+                          dataKey="name"
+                          tick={{ fontSize: 11, fill: "hsl(var(--muted-foreground))" }}
+                          axisLine={{ stroke: "hsl(var(--border))" }}
+                          tickLine={false}
+                        />
+                        <YAxis
+                          tick={{ fontSize: 11, fill: "hsl(var(--muted-foreground))" }}
+                          axisLine={false}
+                          tickLine={false}
+                          tickFormatter={(v) => String(v)}
+                        />
+                        <Tooltip
+                          contentStyle={{
+                            backgroundColor: CHART_COLORS.tooltipBg,
+                            border: `1px solid ${CHART_COLORS.tooltipBorder}`,
+                            borderRadius: "8px",
+                            fontSize: "12px",
+                          }}
+                          formatter={(value: number | undefined) => [value ?? 0, "Arrivals"]}
+                          labelFormatter={(label) => `Period: ${label}`}
+                        />
+                        <Area
+                          type="monotone"
+                          dataKey="arrivals"
+                          stroke={CHART_COLORS.arrivals}
+                          strokeWidth={2}
+                          fill="url(#arrivalsGradient)"
+                        />
+                      </AreaChart>
+                    </ResponsiveContainer>
+                  ) : (
+                    <div className="flex h-full items-center justify-center text-muted-foreground text-sm">
+                      No forecast data yet
+                    </div>
+                  )}
+                </div>
+              </CardContent>
             </CardHeader>
-            <CardContent>
-              <canvas ref={arrivalsRef} width={520} height={220} className="w-full max-w-full" />
-            </CardContent>
           </Card>
+
           <Card>
             <CardHeader>
-              <CardTitle className="text-base">Predicted Wait Projection</CardTitle>
+              <CardTitle className="text-base">Predicted wait (min)</CardTitle>
+              <CardContent className="pt-2">
+                <div className="h-[280px] w-full">
+                  {chartData.length > 0 ? (
+                    <ResponsiveContainer width="100%" height="100%">
+                      <AreaChart data={chartData} margin={{ top: 8, right: 8, left: 0, bottom: 0 }}>
+                        <defs>
+                          <linearGradient id="waitGradient" x1="0" y1="0" x2="0" y2="1">
+                            <stop offset="0%" stopColor={CHART_COLORS.wait} stopOpacity={0.4} />
+                            <stop offset="100%" stopColor={CHART_COLORS.wait} stopOpacity={0} />
+                          </linearGradient>
+                        </defs>
+                        <CartesianGrid strokeDasharray="3 3" stroke={CHART_COLORS.grid} vertical={false} />
+                        <XAxis
+                          dataKey="name"
+                          tick={{ fontSize: 11, fill: "hsl(var(--muted-foreground))" }}
+                          axisLine={{ stroke: "hsl(var(--border))" }}
+                          tickLine={false}
+                        />
+                        <YAxis
+                          tick={{ fontSize: 11, fill: "hsl(var(--muted-foreground))" }}
+                          axisLine={false}
+                          tickLine={false}
+                          tickFormatter={(v) => `${v} min`}
+                        />
+                        <Tooltip
+                          contentStyle={{
+                            backgroundColor: CHART_COLORS.tooltipBg,
+                            border: `1px solid ${CHART_COLORS.tooltipBorder}`,
+                            borderRadius: "8px",
+                            fontSize: "12px",
+                          }}
+                          formatter={(value: number | undefined) => [`${value ?? 0} min`, "Wait"]}
+                          labelFormatter={(label) => `Period: ${label}`}
+                        />
+                        <Area
+                          type="monotone"
+                          dataKey="wait"
+                          stroke={CHART_COLORS.wait}
+                          strokeWidth={2}
+                          fill="url(#waitGradient)"
+                        />
+                      </AreaChart>
+                    </ResponsiveContainer>
+                  ) : (
+                    <div className="flex h-full items-center justify-center text-muted-foreground text-sm">
+                      No forecast data yet
+                    </div>
+                  )}
+                </div>
+              </CardContent>
             </CardHeader>
-            <CardContent>
-              <canvas ref={waitRef} width={520} height={220} className="w-full max-w-full" />
-            </CardContent>
           </Card>
         </div>
 
         <Card>
           <CardHeader>
-            <CardTitle className="text-base">Recommended Action</CardTitle>
+            <CardTitle className="text-base">Arrivals vs wait (combined)</CardTitle>
+            <CardContent className="pt-2">
+              <div className="h-[300px] w-full">
+                {chartData.length > 0 ? (
+                  <ResponsiveContainer width="100%" height="100%">
+                    <AreaChart data={chartData} margin={{ top: 8, right: 48, left: 0, bottom: 0 }}>
+                      <defs>
+                        <linearGradient id="arrivalsCombo" x1="0" y1="0" x2="0" y2="1">
+                          <stop offset="0%" stopColor={CHART_COLORS.arrivals} stopOpacity={0.3} />
+                          <stop offset="100%" stopColor={CHART_COLORS.arrivals} stopOpacity={0} />
+                        </linearGradient>
+                        <linearGradient id="waitCombo" x1="0" y1="0" x2="0" y2="1">
+                          <stop offset="0%" stopColor={CHART_COLORS.wait} stopOpacity={0.3} />
+                          <stop offset="100%" stopColor={CHART_COLORS.wait} stopOpacity={0} />
+                        </linearGradient>
+                      </defs>
+                      <CartesianGrid strokeDasharray="3 3" stroke={CHART_COLORS.grid} vertical={false} />
+                      <XAxis
+                        dataKey="name"
+                        tick={{ fontSize: 11, fill: "hsl(var(--muted-foreground))" }}
+                        axisLine={{ stroke: "hsl(var(--border))" }}
+                        tickLine={false}
+                      />
+                      <YAxis
+                        yAxisId="arrivals"
+                        tick={{ fontSize: 11, fill: "hsl(var(--muted-foreground))" }}
+                        axisLine={false}
+                        tickLine={false}
+                        label={{ value: "Arrivals", angle: -90, position: "insideLeft", style: { fontSize: 11 } }}
+                      />
+                      <YAxis
+                        yAxisId="wait"
+                        orientation="right"
+                        tick={{ fontSize: 11, fill: "hsl(var(--muted-foreground))" }}
+                        axisLine={false}
+                        tickLine={false}
+                        tickFormatter={(v) => `${v}m`}
+                        label={{ value: "Wait (min)", angle: 90, position: "insideRight", style: { fontSize: 11 } }}
+                      />
+                      <Tooltip
+                        contentStyle={{
+                          backgroundColor: CHART_COLORS.tooltipBg,
+                          border: `1px solid ${CHART_COLORS.tooltipBorder}`,
+                          borderRadius: "8px",
+                          fontSize: "12px",
+                        }}
+                        formatter={(value: number | undefined, name?: string) => [
+                          (name ?? "") === "arrivals" ? (value ?? 0) : `${value ?? 0} min`,
+                          (name ?? "") === "arrivals" ? "Arrivals" : "Wait",
+                        ]}
+                        labelFormatter={(label) => `Period: ${label}`}
+                      />
+                      <Legend wrapperStyle={{ fontSize: "12px" }} />
+                      <Area
+                        yAxisId="arrivals"
+                        type="monotone"
+                        dataKey="arrivals"
+                        name="Arrivals"
+                        stroke={CHART_COLORS.arrivals}
+                        strokeWidth={2}
+                        fill="url(#arrivalsCombo)"
+                      />
+                      <Area
+                        yAxisId="wait"
+                        type="monotone"
+                        dataKey="wait"
+                        name="Wait (min)"
+                        stroke={CHART_COLORS.wait}
+                        strokeWidth={2}
+                        fill="url(#waitCombo)"
+                      />
+                    </AreaChart>
+                  </ResponsiveContainer>
+                ) : (
+                  <div className="flex h-full items-center justify-center text-muted-foreground text-sm">
+                    No forecast data yet
+                  </div>
+                )}
+              </div>
+            </CardContent>
+          </CardHeader>
+        </Card>
+
+        <Card>
+          <CardHeader>
+            <CardTitle className="text-base">Recommended action</CardTitle>
             <CardContent className="pt-0">
-              <p className="text-muted-foreground">{data?.forecast?.recommendation ?? "Loading…"}</p>
+              <p className="text-muted-foreground">
+                {data?.forecast?.recommendation ?? "Loading…"}
+              </p>
             </CardContent>
           </CardHeader>
         </Card>
