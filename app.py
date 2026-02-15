@@ -1202,10 +1202,6 @@ if not _SPA_BUILD:
     def patient_station():
         return RedirectResponse("/intake", status_code=302)
 
-    @app.get("/kiosk-station", response_class=HTMLResponse)
-    def kiosk_station():
-        return RedirectResponse("/kiosk", status_code=302)
-
     @app.get("/waiting-room", response_class=HTMLResponse)
     def waiting_room_station():
         return RedirectResponse("/display", status_code=302)
@@ -1228,6 +1224,12 @@ def api_ping():
 def api_config():
     """Public config for frontend (e.g. kiosk). Only includes optional sensor bridge URL when set."""
     return {"sensor_bridge_url": SENSOR_BRIDGE_URL or None}
+
+
+@app.get("/kiosk-station")
+def kiosk_station_redirect():
+    """Always-available redirect so /kiosk-station works in SPA and non-SPA mode (e.g. Render)."""
+    return RedirectResponse("/kiosk", status_code=302)
 
 
 @app.get("/api/demo-mode")
