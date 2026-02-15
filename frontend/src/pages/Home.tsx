@@ -1,6 +1,6 @@
 import { useEffect, useState } from "react";
 import { Link } from "react-router-dom";
-import { User, Tv, Briefcase } from "lucide-react";
+import { User, Tv, Briefcase, ScanLine } from "lucide-react";
 import { Topbar } from "@/components/layout/Topbar";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
@@ -15,6 +15,7 @@ export function Home() {
 
   const stations = [
     { to: "/patient-station", title: "Patient Access", desc: "Complete intake and receive your QR/token for check-in.", icon: User },
+    { to: "/kiosk-station", title: "Kiosk Check-in", desc: "QR scan and token entry for patient check-in at the clinic.", icon: ScanLine },
     { to: "/waiting-room-station", title: "Waiting Room Display", desc: "Token-only queue board for TVs.", icon: Tv },
     { to: "/staff-station", title: "Staff Workspace", desc: "Secure staff operations and analytics.", icon: Briefcase },
   ];
@@ -63,12 +64,13 @@ export function Home() {
         </div>
         <Card>
           <CardHeader>
-            <CardTitle className="text-lg">Multi-Computer Test URLs</CardTitle>
-            <CardDescription>Use one URL per device. Kiosk is hospital-only (open /kiosk-station on the nano).</CardDescription>
+            <CardTitle className="text-lg">Direct URLs (or use the Open buttons above)</CardTitle>
+            <CardDescription>Use one URL per device. Avoid typing in the address bar—use these links or the buttons above so the browser doesn’t open a search.</CardDescription>
           </CardHeader>
           <CardContent>
             <ul className="text-muted-foreground text-sm space-y-1">
               <li>Patient: <strong>/patient-station</strong></li>
+              <li>Kiosk: <strong>/kiosk-station</strong> or <strong>/kiosk</strong></li>
               <li>Waiting room TV: <strong>/waiting-room-station</strong></li>
               <li>Staff: <strong>/staff-station</strong></li>
             </ul>
