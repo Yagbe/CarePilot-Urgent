@@ -320,44 +320,40 @@ export function KioskCamera() {
     }
   };
 
-  // Speak AI greeting once after check-in (OpenAI TTS when available)
-  useEffect(() => {
-    if (!successCard || greetedRef.current) return;
-    greetedRef.current = true;
-    const msg = `Greetings, my name is ${AI_NAME} and I will be your AI medical assistant. Before we get started, I am going to take a look at your vital signs.`;
-    speakWithTts(msg);
-  }, [successCard, speakWithTts]);
-
-  // Run triage once when vitals are available or after 6s
+  // Run triage only after we have vitals (so AI can "look at vitals" and decide emergency)
   useEffect(() => {
     if (!successCard?.token || triageRequestedRef.current) return;
-    const runTriage = () => {
-      if (triageRequestedRef.current) return;
-      triageRequestedRef.current = true;
-      getTriage(successCard.token)
-        .then(setTriageResult)
-        .catch(() => {
-          triageRequestedRef.current = false;
-        });
-    };
-    if (autoVitals) {
-      runTriage();
-      return;
-    }
-    const fallback = setTimeout(runTriage, 6000);
-    return () => clearTimeout(fallback);
+    if (!autoVitals) return;
+    triageRequestedRef.current = true;
+    getTriage(successCard.token)
+      .then(setTriageResult)
+      .catch(() => {
+        triageRequestedRef.current = false;
+      });
   }, [successCard?.token, autoVitals]);
 
+  // When user goes to chat without vitals yet, run triage once so we have a result (backend uses null vitals → low)
   useEffect(() => {
-    if (!successCard || !triageResult || triageSpokenRef.current) return;
+    if (!successCard?.token || kioskStep !== "chat" || triageResult || triageRequestedRef.current) return;
+    triageRequestedRef.current = true;
+    getTriage(successCard.token)
+      .then(setTriageResult)
+      .catch(() => {
+        triageRequestedRef.current = false;
+      });
+  }, [successCard?.token, kioskStep, triageResult]);
+
+  // Speak only on chat step: no AI speech on vitals step. First speak triage (emergency or not), then wait time.
+  useEffect(() => {
+    if (!successCard || kioskStep !== "chat" || !triageResult || triageSpokenRef.current) return;
     triageSpokenRef.current = true;
     const msg = triageResult.ai_script;
     if (msg) speakWithTts(msg);
-  }, [successCard, triageResult, speakWithTts]);
+  }, [successCard, kioskStep, triageResult, speakWithTts]);
 
-  // After triage outcome spoken, announce wait time once (medium/low only)
+  // After triage spoken on chat step, announce wait time once (medium/low only)
   useEffect(() => {
-    if (!successCard || !triageResult || announcedWaitRef.current || triageResult.priority === "high") return;
+    if (!successCard || kioskStep !== "chat" || !triageResult || announcedWaitRef.current || triageResult.priority === "high") return;
     announcedWaitRef.current = true;
     const id = setTimeout(() => {
       const mins = successCard.estimated_wait_min;
@@ -366,7 +362,7 @@ export function KioskCamera() {
       speakWithTts(msg);
     }, 4000);
     return () => clearTimeout(id);
-  }, [successCard, triageResult, speakWithTts]);
+  }, [successCard, kioskStep, triageResult, speakWithTts]);
 
   const handleSessionDone = () => {
     setSuccessCard(null);
