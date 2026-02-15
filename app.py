@@ -394,6 +394,58 @@ RED_FLAG_KEYWORDS = [
     "bleeding heavily", "stroke", "heart attack", "anaphylaxis", "overdose",
 ]
 
+# Triage priority: high = emergency, medium = urgent, low = routine
+PRIORITY_ORDER = {"high": 0, "medium": 1, "low": 2}
+
+
+def _classify_priority_from_vitals_and_symptoms(
+    vitals: Optional[dict[str, Any]],
+    symptoms: str,
+    red_flags: list[str],
+) -> tuple[str, str]:
+    """
+    Classify priority (high/medium/low) from latest vitals and intake symptoms.
+    Returns (priority, emergency_description_or_empty).
+    """
+    symptoms_lower = (symptoms or "").lower()
+    # Severe symptom keywords → high (emergency)
+    severe_keywords = [
+        "chest pain", "heart attack", "stroke", "can't breathe", "difficulty breathing",
+        "unconscious", "seizure", "bleeding heavily", "anaphylaxis", "overdose",
+    ]
+    for kw in severe_keywords:
+        if kw in symptoms_lower:
+            return ("high", kw.replace(" ", "_").replace("'", ""))
+    if red_flags:
+        return ("high", "emergency_symptoms")
+
+    # Vitals-based classification
+    if vitals:
+        spo2 = vitals.get("spo2")
+        hr = vitals.get("hr")
+        bp_sys = vitals.get("bp_sys")
+        bp_dia = vitals.get("bp_dia")
+        temp_c = vitals.get("temp_c")
+        # Critical vitals → high
+        if spo2 is not None and spo2 < 92:
+            return ("high", "low_oxygen")
+        if hr is not None and (hr > 130 or hr < 45):
+            return ("high", "critical_heart_rate")
+        if bp_sys is not None and (bp_sys > 180 or bp_sys < 85):
+            return ("high", "critical_bp")
+        if temp_c is not None and (temp_c > 39.5 or temp_c < 35.0):
+            return ("high", "critical_temp")
+        # Moderate concern → medium
+        if spo2 is not None and spo2 < 95:
+            return ("medium", "")
+        if hr is not None and (hr > 110 or hr < 50):
+            return ("medium", "")
+        if bp_sys is not None and (bp_sys > 160 or bp_sys < 95):
+            return ("medium", "")
+
+    # Default from intake complexity if we have ai_result elsewhere
+    return ("low", "")
+
 
 def _extract_duration_days(duration: str) -> int:
     text = (duration or "").lower()
@@ -574,6 +626,17 @@ def _queue_active() -> list[str]:
         return [pid for pid in queue_order if pid in patients and patients[pid].get("status") != "done"]
 
 
+def _reorder_queue_by_priority() -> None:
+    """Sort queue_order by priority (high, medium, low) then by checked_in_at. Call with STATE_LOCK held."""
+    active = [pid for pid in queue_order if pid in patients and patients[pid].get("status") != "done"]
+    done_or_gone = [pid for pid in queue_order if pid not in patients or patients[pid].get("status") == "done"]
+    key = lambda pid: (PRIORITY_ORDER.get(patients[pid].get("priority", "low"), 2), patients[pid].get("checked_in_at") or "")
+    active.sort(key=key)
+    queue_order.clear()
+    queue_order.extend(active)
+    queue_order.extend(done_or_gone)
+
+
 def _public_queue_items() -> list[dict[str, Any]]:
     active = _queue_active()
     waits = _simulate_wait_map(active, provider_count)
@@ -585,6 +648,7 @@ def _public_queue_items() -> list[dict[str, Any]]:
             typical = int(p.get("ai_result", {}).get("estimated_visit_duration_minutes", 20))
             out.append({
                 "token": p.get("token"),
+                "priority": p.get("priority", "low"),
                 "status_label": status_label(p.get("status", "waiting")),
                 "estimated_wait_min": waits.get(pid, 0),
                 "position_in_line": pos,
@@ -618,6 +682,8 @@ def _staff_queue_items() -> list[dict[str, Any]]:
             out.append({
             "id": pid,
             "token": p.get("token"),
+            "priority": p.get("priority", "low"),
+            "emergency_type": p.get("emergency_type", ""),
             "full_name": full_name(p),
             "display_name": p.get("first_name", ""),
             "status": p.get("status", "waiting"),
@@ -724,6 +790,8 @@ def _seed_demo_patients() -> None:
             "arrival_window": window,
             "ai_result": ai,
             "status": "waiting",
+            "priority": "low",
+            "emergency_type": "",
             "created_at": datetime.utcnow().isoformat(),
             "checked_in_at": datetime.utcnow().isoformat(),
         }
@@ -842,6 +910,8 @@ def _kiosk_checkin_result(code: str) -> dict[str, Any]:
 
         p["status"] = "waiting"
         p["checked_in_at"] = datetime.utcnow().isoformat()
+        p["priority"] = p.get("priority", "low")
+        p["emergency_type"] = p.get("emergency_type", "")
         if pid not in queue_order:
             queue_order.append(pid)
         DB_CONN.execute(
@@ -1082,6 +1152,8 @@ def intake_submit(
         "arrival_window": window,
         "ai_result": ai,
         "status": "pending",
+        "priority": "low",
+        "emergency_type": "",
         "created_at": datetime.utcnow().isoformat(),
         "checked_in_at": None,
         }
@@ -1131,6 +1203,8 @@ def api_intake_submit(body: IntakeRequest):
             "arrival_window": window,
             "ai_result": ai,
             "status": "pending",
+            "priority": "low",
+            "emergency_type": "",
             "created_at": datetime.utcnow().isoformat(),
             "checked_in_at": None,
         }
@@ -1286,6 +1360,61 @@ async def api_kiosk_checkin_json(body: KioskCheckinRequest):
     if result.get("ok"):
         await _broadcast_queue_update()
     return result
+
+
+EMERGENCY_LABELS: dict[str, str] = {
+    "low_oxygen": "low oxygen emergency",
+    "critical_heart_rate": "critical heart rhythm",
+    "critical_bp": "critical blood pressure",
+    "critical_temp": "critical temperature",
+    "heart_attack": "heart attack",
+    "chest_pain": "potential cardiac emergency",
+    "stroke": "stroke",
+    "emergency_symptoms": "medical emergency",
+}
+
+
+@app.get("/api/triage")
+def api_triage(token: str = ""):
+    """
+    Run triage for patient by token: classify priority from vitals + symptoms,
+    set patient priority, reorder queue, return message and AI script for kiosk.
+    """
+    raw = (token or "").strip().upper()
+    if not raw:
+        raise HTTPException(400, "token required")
+    with STATE_LOCK:
+        pid = None
+        for _pid, p in patients.items():
+            if str(p.get("token", "")).upper() == raw:
+                pid = _pid
+                break
+        if not pid:
+            raise HTTPException(404, "Patient not found.")
+        p = patients[pid]
+        vitals = _latest_vitals_for_pid(pid)
+        symptoms = (p.get("symptoms") or "").strip()
+        ai = p.get("ai_result") or {}
+        red_flags = ai.get("red_flag_keywords_detected") or []
+        priority, emergency_type = _classify_priority_from_vitals_and_symptoms(vitals, symptoms, red_flags)
+        p["priority"] = priority
+        p["emergency_type"] = emergency_type
+        _reorder_queue_by_priority()
+    emergency_label = EMERGENCY_LABELS.get(emergency_type, "medical emergency") if emergency_type else ""
+    if priority == "high":
+        message = f"You are having the conditions of a {emergency_label} and need to be rushed immediately. A doctor is being notified."
+        ai_script = f"You are having the conditions of a {emergency_label} and need to be rushed immediately. A doctor is being notified."
+    else:
+        level = "Medium" if priority == "medium" else "Low"
+        message = f"Your priority is {level}. Please proceed to the waiting room and have a seat. You will be called when it is your turn."
+        ai_script = f"Your priority is {level}. Please proceed to the waiting room and have a seat. You will be called when it is your turn."
+    return {
+        "priority": priority,
+        "emergency_type": emergency_type or None,
+        "emergency_label": emergency_label or None,
+        "message": message,
+        "ai_script": ai_script,
+    }
 
 
 @app.post("/api/vitals/submit")

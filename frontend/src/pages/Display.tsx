@@ -65,6 +65,21 @@ export function Display() {
     return "bg-blue-100 text-blue-800 dark:bg-blue-900/30 dark:text-blue-200";
   };
 
+  const priorityColor = (p?: string) => {
+    if (p === "high") return "bg-red-500 text-white";
+    if (p === "medium") return "bg-orange-500 text-white";
+    return "bg-yellow-500 text-yellow-950";
+  };
+
+  const nextItem = queue.length > 0 ? queue[0] : null;
+  const announcement = nextItem
+    ? nextItem.priority === "high"
+      ? `${nextItem.token} — High Priority — Please proceed to Emergency. A doctor is being notified.`
+      : nextItem.priority === "medium"
+        ? `${nextItem.token} — Medium Priority — Please proceed to the waiting room. You will be called when ready.`
+        : `${nextItem.token} — Please proceed to the waiting room. You will be called when ready.`
+    : null;
+
   return (
     <>
       <Topbar />
@@ -72,6 +87,16 @@ export function Display() {
         <h1 className="text-2xl font-bold">Waiting Room Display</h1>
         <p className="text-muted-foreground text-sm">Token-only queue (privacy-safe). Real-time updates enabled.</p>
         <p className="text-muted-foreground text-xs">This screen contains no medical details.</p>
+
+        {announcement && (
+          <Card className="border-2 border-primary bg-primary/5">
+            <CardContent className="pt-6">
+              <p className="text-muted-foreground text-sm font-medium mb-1">Now calling</p>
+              <p className="text-xl font-bold">{announcement}</p>
+            </CardContent>
+          </Card>
+        )}
+
         <Card>
           <CardContent className="flex items-baseline justify-between pt-6">
             <span className="text-muted-foreground text-sm">Lobby Occupancy</span>
@@ -96,7 +121,14 @@ export function Display() {
               <Card className="p-4">
                 <div className="flex flex-wrap items-center justify-between gap-2">
                   <div>
-                    <p className="font-mono text-xl font-bold">{item.token}</p>
+                    <div className="flex items-center gap-2 flex-wrap">
+                      <p className="font-mono text-xl font-bold">{item.token}</p>
+                      {item.priority && (
+                        <span className={`rounded-full px-2 py-0.5 text-xs font-medium ${priorityColor(item.priority)}`}>
+                          {item.priority === "high" ? "High" : item.priority === "medium" ? "Medium" : "Low"}
+                        </span>
+                      )}
+                    </div>
                     <p className="text-muted-foreground text-sm">
                       Estimated wait: {item.estimated_wait_min ?? 0} min
                     </p>

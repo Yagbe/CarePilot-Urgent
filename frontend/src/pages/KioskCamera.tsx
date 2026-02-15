@@ -4,7 +4,7 @@ import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
-import { postKioskCheckin, postAiChat, getVitalsByToken, type VitalsReading } from "@/api/client";
+import { postKioskCheckin, postAiChat, getVitalsByToken, getTriage, type VitalsReading, type TriageResult } from "@/api/client";
 import { motion } from "framer-motion";
 import { Mic, Activity } from "lucide-react";
 import { VitalsForm } from "@/components/vitals/VitalsForm";
@@ -49,6 +49,11 @@ export function KioskCamera() {
   const announcedWaitRef = useRef(false);
   const [autoVitals, setAutoVitals] = useState<VitalsReading | null>(null);
   const [showManualVitals, setShowManualVitals] = useState(false);
+  const [triageResult, setTriageResult] = useState<TriageResult | null>(null);
+  const greetedRef = useRef(false);
+  const triageSpokenRef = useRef(false);
+  const triageRequestedRef = useRef(false);
+  const AI_NAME = "CarePilot";
 
   const submitCode = useCallback(async (code: string, fromCamera: boolean) => {
     if (!code.trim()) return;
@@ -65,6 +70,10 @@ export function KioskCamera() {
         });
         setAutoVitals(null);
         setShowManualVitals(false);
+        setTriageResult(null);
+        greetedRef.current = false;
+        triageSpokenRef.current = false;
+        triageRequestedRef.current = false;
         beep();
         // Tell local sensor bridge (Nano) which patient to send vitals for
         try {
@@ -184,28 +193,76 @@ export function KioskCamera() {
     recognitionRef.current?.start();
   };
 
-  // When patient is checked in, announce wait time once and that they can ask questions
+  // Speak AI greeting once after check-in
   useEffect(() => {
-    if (!successCard || announcedWaitRef.current) return;
-    announcedWaitRef.current = true;
-    const mins = successCard.estimated_wait_min;
-    const waitText = mins <= 0 ? "a short time" : `${mins} minute${mins !== 1 ? "s" : ""}`;
-    const msg = `You're checked in. Your estimated wait is ${waitText}. If you have any questions, ask me now.`;
+    if (!successCard || greetedRef.current) return;
+    greetedRef.current = true;
+    const msg = `Greetings, my name is ${AI_NAME} and I will be your AI medical assistant. Before we get started, I am going to take a look at your vital signs.`;
     if ("speechSynthesis" in window) {
       const u = new SpeechSynthesisUtterance(msg);
       window.speechSynthesis.speak(u);
     }
   }, [successCard]);
 
+  // Run triage once when vitals are available or after 6s
+  useEffect(() => {
+    if (!successCard?.token || triageRequestedRef.current) return;
+    const runTriage = () => {
+      if (triageRequestedRef.current) return;
+      triageRequestedRef.current = true;
+      getTriage(successCard.token)
+        .then(setTriageResult)
+        .catch(() => {
+          triageRequestedRef.current = false;
+        });
+    };
+    if (autoVitals) {
+      runTriage();
+      return;
+    }
+    const fallback = setTimeout(runTriage, 6000);
+    return () => clearTimeout(fallback);
+  }, [successCard?.token, autoVitals]);
+
+  useEffect(() => {
+    if (!successCard || !triageResult || triageSpokenRef.current) return;
+    triageSpokenRef.current = true;
+    const msg = triageResult.ai_script;
+    if ("speechSynthesis" in window && msg) {
+      const u = new SpeechSynthesisUtterance(msg);
+      window.speechSynthesis.speak(u);
+    }
+  }, [successCard, triageResult]);
+
+  // After triage outcome spoken, announce wait time once (medium/low only)
+  useEffect(() => {
+    if (!successCard || !triageResult || announcedWaitRef.current || triageResult.priority === "high") return;
+    announcedWaitRef.current = true;
+    const id = setTimeout(() => {
+      const mins = successCard.estimated_wait_min;
+      const waitText = mins <= 0 ? "a short time" : `${mins} minute${mins !== 1 ? "s" : ""}`;
+      const msg = `Your estimated wait is ${waitText}. If you have any questions, ask me now.`;
+      if ("speechSynthesis" in window) {
+        const u = new SpeechSynthesisUtterance(msg);
+        window.speechSynthesis.speak(u);
+      }
+    }, 4000);
+    return () => clearTimeout(id);
+  }, [successCard, triageResult]);
+
   const handleNextPatient = () => {
     setSuccessCard(null);
     setAutoVitals(null);
     setShowManualVitals(false);
+    setTriageResult(null);
     setScanningEnabled(true);
     setStatus("Scanning for QR…");
     setTranscript([]);
     setRedFlagAlert(false);
     announcedWaitRef.current = false;
+    greetedRef.current = false;
+    triageSpokenRef.current = false;
+    triageRequestedRef.current = false;
   };
 
   // Poll for vitals when patient is checked in (sensors auto-submit to API)
@@ -285,6 +342,37 @@ export function KioskCamera() {
                 Next patient
               </Button>
             </div>
+
+            {triageResult && (
+              <div
+                className={`rounded-lg border-l-4 p-4 ${
+                  triageResult.priority === "high"
+                    ? "border-red-600 bg-red-50 dark:bg-red-950"
+                    : triageResult.priority === "medium"
+                      ? "border-orange-500 bg-orange-50 dark:bg-orange-950/50"
+                      : "border-yellow-500 bg-yellow-50 dark:bg-yellow-950/50"
+                }`}
+              >
+                <p className={`text-lg font-bold ${
+                  triageResult.priority === "high"
+                    ? "text-red-900 dark:text-red-100"
+                    : triageResult.priority === "medium"
+                      ? "text-orange-900 dark:text-orange-100"
+                      : "text-yellow-900 dark:text-yellow-100"
+                }`}>
+                  Priority: {triageResult.priority === "high" ? "High" : triageResult.priority === "medium" ? "Medium" : "Low"}
+                </p>
+                <p className={`text-sm mt-1 ${
+                  triageResult.priority === "high"
+                    ? "text-red-800 dark:text-red-200"
+                    : triageResult.priority === "medium"
+                      ? "text-orange-800 dark:text-orange-200"
+                      : "text-yellow-800 dark:text-yellow-200"
+                }`}>
+                  {triageResult.message}
+                </p>
+              </div>
+            )}
 
             <Card className="text-center">
               <CardHeader>

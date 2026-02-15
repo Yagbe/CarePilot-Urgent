@@ -54,6 +54,7 @@ export async function postStaffLogin(password: string): Promise<{ ok: boolean; r
 
 export type PublicQueueItem = {
   token: string;
+  priority?: "high" | "medium" | "low";
   status: string;
   status_label?: string;
   estimated_wait_min?: number;
@@ -172,6 +173,21 @@ export async function getVitalsForPatient(pid: string): Promise<{ ok: boolean; v
 export async function getVitalsByToken(token: string): Promise<{ ok: boolean; vitals: VitalsReading | null }> {
   const r = await fetch(`${API}/api/vitals/by-token?token=${encodeURIComponent(token)}`, { credentials: "same-origin" });
   if (!r.ok) throw new ApiError("Failed to load vitals", r.status);
+  return r.json();
+}
+
+export type TriageResult = {
+  priority: "high" | "medium" | "low";
+  emergency_type?: string | null;
+  emergency_label?: string | null;
+  message: string;
+  ai_script: string;
+};
+
+/** Kiosk: run triage by token; returns priority and script for AI to speak. */
+export async function getTriage(token: string): Promise<TriageResult> {
+  const r = await fetch(`${API}/api/triage?token=${encodeURIComponent(token)}`, { credentials: "same-origin" });
+  if (!r.ok) throw new ApiError("Triage failed", r.status);
   return r.json();
 }
 
