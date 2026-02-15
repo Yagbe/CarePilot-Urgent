@@ -326,17 +326,17 @@ export function KioskCamera() {
       });
   }, [successCard?.token, kioskStep, triageResult]);
 
-  // When vitals are in and triage is done: say if vitals look good, need attention, or emergency (on vitals or chat step)
+  // After you enter vitals: speak condition level based on the vitals you entered (on vitals or chat step)
   useEffect(() => {
     if (!successCard || !triageResult || triageSpokenRef.current) return;
     if (kioskStep !== "vitals" && kioskStep !== "chat") return;
     triageSpokenRef.current = true;
     const msg =
       triageResult.priority === "high"
-        ? triageResult.ai_script
+        ? `Based on the vitals you entered, your condition level is high. ${triageResult.ai_script}`
         : triageResult.priority === "medium"
-          ? "Your vitals need a bit of attention. A nurse may check in with you. Please have a seat in the waiting room and we'll call you when it's your turn."
-          : "Your vitals look good. Please have a seat in the waiting room. We'll call you when it's your turn.";
+          ? "Based on the vitals you entered, your condition level is medium. Your vitals need a bit of attention. A nurse may check in with you. Please have a seat in the waiting room and we'll call you when it's your turn."
+          : "Based on the vitals you entered, your condition level is low. Your vitals look good. Please have a seat in the waiting room. We'll call you when it's your turn.";
     if (msg) speakWithTts(msg);
   }, [successCard, kioskStep, triageResult, speakWithTts]);
 
