@@ -26,6 +26,20 @@ from datetime import datetime, timedelta
 from pathlib import Path
 from typing import Any, Optional
 
+# #region agent log
+DEBUG_LOG_PATH = Path(__file__).resolve().parent / ".cursor" / "debug.log"
+def _agent_log(message: str, data: dict[str, Any], hypothesis_id: str = ""):
+    try:
+        payload = {"message": message, "data": data, "timestamp": int(time.time() * 1000)}
+        if hypothesis_id:
+            payload["hypothesisId"] = hypothesis_id
+        DEBUG_LOG_PATH.parent.mkdir(parents=True, exist_ok=True)
+        with open(DEBUG_LOG_PATH, "a") as f:
+            f.write(json.dumps(payload) + "\n")
+    except Exception:
+        pass
+# #endregion
+
 import qrcode
 from fastapi import FastAPI, Form, HTTPException, Request, WebSocket, WebSocketDisconnect
 from pydantic import BaseModel
@@ -1046,11 +1060,13 @@ def _lobby_load_score() -> dict[str, Any]:
 def _gemini_generate(system_instruction: str, user_text: str) -> Optional[str]:
     """Call Gemini API (REST). Returns generated text or None on error."""
     if not GEMINI_API_KEY:
+        # #region agent log
+        _agent_log("gemini: key missing", {"key_len": 0}, "A")
+        # #endregion
         return None
     models_to_try = [GEMINI_MODEL, "gemini-1.5-flash", "gemini-1.5-flash-latest", "gemini-pro"]
     seen = set()
     last_error: Optional[str] = None
-    # Build prompt with instruction inline (fallback when systemInstruction not supported)
     inline_prompt = f"{system_instruction}\n\nUser: {user_text}\n\nAssistant:"
     for model in models_to_try:
         if not model or model in seen:
@@ -1058,6 +1074,9 @@ def _gemini_generate(system_instruction: str, user_text: str) -> Optional[str]:
         seen.add(model)
         url = f"https://generativelanguage.googleapis.com/v1beta/models/{model}:generateContent?key={GEMINI_API_KEY}"
         for use_system in (True, False):  # try with systemInstruction, then without
+            # #region agent log
+            _agent_log("gemini: attempt", {"model": model, "use_system": use_system}, "D")
+            # #endregion
             payload = {
                 "contents": [{"parts": [{"text": inline_prompt if not use_system else user_text}]}],
                 "generationConfig": {"temperature": 0.3, "maxOutputTokens": 512, "topP": 0.95},
@@ -1072,11 +1091,14 @@ def _gemini_generate(system_instruction: str, user_text: str) -> Optional[str]:
                 with urllib.request.urlopen(req, timeout=25) as resp:
                     out = json.loads(resp.read().decode("utf-8"))
                 err = out.get("error")
+                cand = out.get("candidates") or []
+                # #region agent log
+                _agent_log("gemini: response", {"model": model, "use_system": use_system, "has_error": bool(err), "has_candidates": bool(cand), "cand_count": len(cand), "top_keys": list(out.keys())[:10]}, "C")
+                # #endregion
                 if err:
                     last_error = str(err)
                     print(f"[CarePilot] Gemini [{model}] API error: {err}", flush=True)
                     break
-                cand = out.get("candidates") or []
                 if not cand:
                     last_error = "no candidates in response"
                     print(f"[CarePilot] Gemini [{model}] no candidates. Keys: {list(out.keys())}", flush=True)
@@ -1101,12 +1123,21 @@ def _gemini_generate(system_instruction: str, user_text: str) -> Optional[str]:
                 except Exception:
                     pass
                 last_error = f"HTTP {e.code}: {body[:400]}"
+                # #region agent log
+                _agent_log("gemini: HTTPError", {"model": model, "code": e.code, "body_snippet": body[:200]}, "B")
+                # #endregion
                 print(f"[CarePilot] Gemini [{model}] {last_error}", flush=True)
                 break
             except Exception as e:
                 last_error = str(e)
+                # #region agent log
+                _agent_log("gemini: Exception", {"model": model, "error_type": type(e).__name__, "error_msg": str(e)[:200]}, "D")
+                # #endregion
                 print(f"[CarePilot] Gemini [{model}] failed: {e}", flush=True)
                 break
+    # #region agent log
+    _agent_log("gemini: returning None", {"last_error": (last_error or "")[:300]}, "E")
+    # #endregion
     return None
 
 
@@ -1132,12 +1163,18 @@ def _ai_chat_reply(user_text: str) -> dict[str, Any]:
             "Please alert clinic staff now for immediate support."
         )
         return {"reply": reply, "red_flags": red_flags}
+    # #region agent log
+    _agent_log("chat_reply: check key", {"key_set": bool(GEMINI_API_KEY), "key_len": len(GEMINI_API_KEY)}, "A")
+    # #endregion
     if not GEMINI_API_KEY:
         return {
             "reply": "The AI assistant is not configured (missing GEMINI_API_KEY). Please ask a staff member.",
             "red_flags": [],
         }
     gemini_reply = _gemini_generate(AI_CHAT_SYSTEM_PROMPT, text)
+    # #region agent log
+    _agent_log("chat_reply: after gemini", {"got_reply": bool(gemini_reply), "reply_len": len(gemini_reply) if gemini_reply else 0}, "E")
+    # #endregion
     if gemini_reply:
         return {"reply": gemini_reply, "red_flags": []}
     return {
