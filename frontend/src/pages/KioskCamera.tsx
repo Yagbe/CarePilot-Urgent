@@ -299,7 +299,7 @@ export function KioskCamera() {
     if (!successCard || kioskStep !== "vitals" || greetedRef.current) return;
     greetedRef.current = true;
     const msg =
-      "Hello, and welcome. Please enter your vital signs in the form below. You can use readings from an external monitor or have staff enter them.";
+      "Hello, and welcome. Please place your finger on the sensor and enter your vitals";
     speakWithTts(msg);
   }, [successCard, kioskStep, speakWithTts]);
 
