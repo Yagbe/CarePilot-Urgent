@@ -53,7 +53,7 @@ For **temperature only** (e.g. DS18B20):
 - Implement `read_vitals_ds18b20()` to read from the 1-Wire interface and return `{"temp_c": 36.6, "simulated": 0}`.
 - You can combine with simulated HR/SpO2 or another sensor by merging dicts in a custom `read_vitals()`.
 
-## 4. Flow for judging / demo
+## 4. Flow for demo / testing
 
 1. Patient checks in at the kiosk (scan QR or enter token) → they see their token, e.g. **UC-1234**.
 2. On the Nano (or laptop):  

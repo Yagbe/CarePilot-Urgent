@@ -1,9 +1,11 @@
 """
-CarePilot Urgent - Hackathon Winner Edition.
+CarePilot Urgent - FastAPI + React urgent care workflow application.
 
-Run:
-  pip install -r requirements.txt
-  uvicorn app:app --reload --host 0.0.0.0 --port 8000
+Sections: config and state; CameraManager (OpenCV/GStreamer, QR, MJPEG);
+triage (vitals + symptoms -> priority); AI chat (Gemini/OpenAI) and TTS;
+routes for intake, kiosk, vitals, queue, staff, display, camera stream.
+
+Run: pip install -r requirements.txt && uvicorn app:app --host 0.0.0.0 --port 8000
 """
 
 import io
@@ -26,23 +28,6 @@ from datetime import datetime, timedelta
 from pathlib import Path
 from typing import Any, Optional
 
-# #region agent log
-_DEBUG_LOG_PATH = Path(__file__).resolve().parent / ".cursor" / "debug.log"
-def _agent_log(message: str, data: dict[str, Any], hypothesis_id: str = ""):
-    payload = {"message": message, "data": data, "timestamp": int(time.time() * 1000)}
-    if hypothesis_id:
-        payload["hypothesisId"] = hypothesis_id
-    line = json.dumps(payload) + "\n"
-    try:
-        _DEBUG_LOG_PATH.parent.mkdir(parents=True, exist_ok=True)
-        with open(_DEBUG_LOG_PATH, "a") as f:
-            f.write(line)
-    except Exception:
-        pass
-    import sys
-    print(f"[CarePilot.debug] {message} | {hypothesis_id} | {data}", file=sys.stdout, flush=True)
-# #endregion
-
 import qrcode
 from fastapi import FastAPI, Form, HTTPException, Request, WebSocket, WebSocketDisconnect
 from pydantic import BaseModel
@@ -57,7 +42,7 @@ from dotenv import load_dotenv
 load_dotenv()
 
 # -----------------------------------------------------------------------------
-# JSON API request models (for React / Best UI/UX stack)
+# API request models (Pydantic)
 # -----------------------------------------------------------------------------
 class IntakeRequest(BaseModel):
     first_name: str = ""
@@ -97,7 +82,7 @@ class VitalsSubmitRequest(BaseModel):
 
 
 # -----------------------------------------------------------------------------
-# App + storage
+# App config and storage (env from .env; never commit .env to git)
 # -----------------------------------------------------------------------------
 APP_VERSION = "3.1"
 APP_ENV = os.getenv("APP_ENV", "development").lower()
@@ -108,10 +93,10 @@ ENABLE_DOCS = os.getenv("ENABLE_DOCS", "1" if APP_ENV != "production" else "0") 
 TRUSTED_HOSTS = [h.strip() for h in os.getenv("TRUSTED_HOSTS", "*").split(",") if h.strip()] or ["*"]
 APP_SECRET_KEY = os.getenv("APP_SECRET_KEY", "dev-only-change-me")
 STAFF_ACCESS_PASSWORD = os.getenv("STAFF_ACCESS_PASSWORD", "1234").strip()
-# Demo/judging: in production, if no custom password set, use a fixed one so login always works
-STAFF_DEMO_PASSWORD = "Asdqwe135$$"
-if APP_ENV == "production" and STAFF_ACCESS_PASSWORD == "1234":
-    STAFF_ACCESS_PASSWORD = STAFF_DEMO_PASSWORD
+# Production fallback when STAFF_ACCESS_PASSWORD is not set in environment
+STAFF_FALLBACK_PASSWORD = os.getenv("STAFF_FALLBACK_PASSWORD", "").strip() or "Asdqwe135$$"
+if APP_ENV == "production" and STAFF_ACCESS_PASSWORD in ("", "1234"):
+    STAFF_ACCESS_PASSWORD = STAFF_FALLBACK_PASSWORD
 STAFF_SESSION_TTL_MINUTES = int(os.getenv("STAFF_SESSION_TTL_MINUTES", "480"))
 STAFF_SESSION_COOKIE = "carepilot_staff_session"
 CAMERA_INDEX = int(os.getenv("CAMERA_INDEX", "0"))
@@ -1070,9 +1055,6 @@ def _lobby_load_score() -> dict[str, Any]:
 def _gemini_generate(system_instruction: str, user_text: str) -> Optional[str]:
     """Call Gemini API (REST). Returns generated text or None on error."""
     if not GEMINI_API_KEY:
-        # #region agent log
-        _agent_log("gemini: key missing", {"key_len": 0}, "A")
-        # #endregion
         return None
     models_to_try = [GEMINI_MODEL, "gemini-2.5-flash", "gemini-2.0-flash", "gemini-flash-latest", "gemini-pro-latest"]
     seen = set()
@@ -1084,9 +1066,6 @@ def _gemini_generate(system_instruction: str, user_text: str) -> Optional[str]:
         seen.add(model)
         url = f"https://generativelanguage.googleapis.com/v1beta/models/{model}:generateContent?key={GEMINI_API_KEY}"
         for use_system in (True, False):  # try with systemInstruction, then without
-            # #region agent log
-            _agent_log("gemini: attempt", {"model": model, "use_system": use_system}, "D")
-            # #endregion
             payload = {
                 "contents": [{"parts": [{"text": inline_prompt if not use_system else user_text}]}],
                 "generationConfig": {"temperature": 0.3, "maxOutputTokens": 512, "topP": 0.95},
@@ -1102,9 +1081,6 @@ def _gemini_generate(system_instruction: str, user_text: str) -> Optional[str]:
                     out = json.loads(resp.read().decode("utf-8"))
                 err = out.get("error")
                 cand = out.get("candidates") or []
-                # #region agent log
-                _agent_log("gemini: response", {"model": model, "use_system": use_system, "has_error": bool(err), "has_candidates": bool(cand), "cand_count": len(cand), "top_keys": list(out.keys())[:10]}, "C")
-                # #endregion
                 if err:
                     last_error = str(err)
                     print(f"[CarePilot] Gemini [{model}] API error: {err}", flush=True)
@@ -1133,21 +1109,12 @@ def _gemini_generate(system_instruction: str, user_text: str) -> Optional[str]:
                 except Exception:
                     pass
                 last_error = f"HTTP {e.code}: {body[:400]}"
-                # #region agent log
-                _agent_log("gemini: HTTPError", {"model": model, "code": e.code, "body_snippet": body[:200]}, "B")
-                # #endregion
                 print(f"[CarePilot] Gemini [{model}] {last_error}", flush=True)
                 break
             except Exception as e:
                 last_error = str(e)
-                # #region agent log
-                _agent_log("gemini: Exception", {"model": model, "error_type": type(e).__name__, "error_msg": str(e)[:200]}, "D")
-                # #endregion
                 print(f"[CarePilot] Gemini [{model}] failed: {e}", flush=True)
                 break
-    # #region agent log
-    _agent_log("gemini: returning None", {"last_error": (last_error or "")[:300]}, "E")
-    # #endregion
     return None
 
 
@@ -1278,18 +1245,12 @@ def _ai_chat_reply(user_text: str, vitals_context: Optional[str] = None, patient
         system_prompt += "\n\n[Patient's vitals - read these back if they ask for their vitals; do not interpret or diagnose] " + vitals_context
 
     if AI_PROVIDER == "openai":
-        # #region agent log
-        _agent_log("chat_reply: check key", {"provider": "openai", "key_set": bool(OPENAI_API_KEY), "key_len": len(OPENAI_API_KEY)}, "A")
-        # #endregion
         if not OPENAI_API_KEY:
             return {
                 "reply": "The AI assistant is not configured (missing OPENAI_API_KEY). Please ask a staff member.",
                 "red_flags": [],
             }
         openai_reply = _openai_generate(system_prompt, text)
-        # #region agent log
-        _agent_log("chat_reply: after openai", {"got_reply": bool(openai_reply), "reply_len": len(openai_reply) if openai_reply else 0}, "E")
-        # #endregion
         if openai_reply:
             return {"reply": openai_reply, "red_flags": []}
         return {
@@ -1298,18 +1259,12 @@ def _ai_chat_reply(user_text: str, vitals_context: Optional[str] = None, patient
         }
 
     # Gemini (default)
-    # #region agent log
-    _agent_log("chat_reply: check key", {"provider": "gemini", "key_set": bool(GEMINI_API_KEY), "key_len": len(GEMINI_API_KEY)}, "A")
-    # #endregion
     if not GEMINI_API_KEY:
         return {
             "reply": "The AI assistant is not configured (missing GEMINI_API_KEY). Please ask a staff member.",
             "red_flags": [],
         }
     gemini_reply = _gemini_generate(system_prompt, text)
-    # #region agent log
-    _agent_log("chat_reply: after gemini", {"got_reply": bool(gemini_reply), "reply_len": len(gemini_reply) if gemini_reply else 0}, "E")
-    # #endregion
     if gemini_reply:
         return {"reply": gemini_reply, "red_flags": []}
     return {
@@ -1820,9 +1775,6 @@ async def api_vitals_simulate(request: Request, pid: str = Form("")):
 
 @app.post("/api/ai/chat")
 def api_ai_chat(request: Request, pid: str = Form(""), message: str = Form(""), role: str = Form("patient")):
-    # #region agent log
-    _agent_log("api_ai_chat: request", {"message_preview": (message or "")[:80], "message_len": len((message or "").strip())}, "route")
-    # #endregion
     text = (message or "").strip()
     if not text:
         return {
@@ -2148,7 +2100,7 @@ def staff_login_submit(request: Request, password: str = Form("")):
         attempts = [ts for ts in LOGIN_ATTEMPTS_BY_IP.get(ip, []) if now - ts < 60]
         if len(attempts) >= 5:
             return render("staff_login.html", page="staff_login", error="Too many attempts. Please wait a minute.")
-        if password not in (STAFF_ACCESS_PASSWORD, STAFF_DEMO_PASSWORD):
+        if password not in (STAFF_ACCESS_PASSWORD, STAFF_FALLBACK_PASSWORD):
             attempts.append(now)
             LOGIN_ATTEMPTS_BY_IP[ip] = attempts
             return render("staff_login.html", page="staff_login", error="Invalid staff password.")
@@ -2175,7 +2127,7 @@ def api_staff_login(request: Request, body: StaffLoginRequest):
         attempts = [ts for ts in LOGIN_ATTEMPTS_BY_IP.get(ip, []) if now - ts < 60]
         if len(attempts) >= 5:
             raise HTTPException(429, "Too many attempts. Please wait a minute.")
-        if (body.password or "") not in (STAFF_ACCESS_PASSWORD, STAFF_DEMO_PASSWORD):
+        if (body.password or "") not in (STAFF_ACCESS_PASSWORD, STAFF_FALLBACK_PASSWORD):
             attempts.append(now)
             LOGIN_ATTEMPTS_BY_IP[ip] = attempts
             raise HTTPException(401, "Invalid staff password.")

@@ -7,6 +7,8 @@ CarePilot Urgent is a FastAPI + React urgent care workflow app:
 - **Waiting room display** – token-only queue (privacy-safe)
 - **Staff** – queue, status updates, analytics (password-protected)
 
+**Sharing on GitHub:** See [LICENSE](LICENSE) (all rights reserved) and [SHARING.md](SHARING.md) for keeping secrets out of the repo and your rights when the repo is public.
+
 ---
 
 ## 1) Quick Start (Local)
@@ -51,6 +53,7 @@ cp .env.example .env
 | `PORT` | Server port | `8000` |
 | `APP_SECRET_KEY` | Session/signing secret | long random string |
 | `STAFF_ACCESS_PASSWORD` | Staff login password | set in production |
+| `STAFF_FALLBACK_PASSWORD` | Fallback when `STAFF_ACCESS_PASSWORD` unset | optional |
 | `STAFF_SESSION_TTL_MINUTES` | Staff session length | `480` |
 | `DB_PATH` | SQLite database path | `carepilot.db` or `/data/carepilot.db` |
 | `CAMERA_INDEX` | Webcam device index for kiosk | `0` |
@@ -60,14 +63,14 @@ cp .env.example .env
 | `DEMO_MODE` | Show demo badge | `0` or `1` |
 | `USE_SIMULATED_VITALS` | Allow simulated vitals | `1` |
 
-In **production**, if `STAFF_ACCESS_PASSWORD` is not set (or left default), the app uses a built-in demo password so login works for judging; set `STAFF_ACCESS_PASSWORD` in your platform’s env to use your own.
+In **production**, if `STAFF_ACCESS_PASSWORD` is not set (or left default), the app uses a built-in fallback password when unset; set `STAFF_ACCESS_PASSWORD` in your environment; optionally set `STAFF_FALLBACK_PASSWORD` for a fallback.
 
 ---
 
 ## 3) Staff Login
 
 - **Local (development):** use the password in `.env` (e.g. `STAFF_ACCESS_PASSWORD=1234` or your choice).
-- **Production (e.g. Render):** if you have not set `STAFF_ACCESS_PASSWORD` in the dashboard, use the built-in demo password so the app still starts. Set `STAFF_ACCESS_PASSWORD` in the host’s environment to override.
+- **Production (e.g. Render):** if you have not set `STAFF_ACCESS_PASSWORD` in the dashboard, set `STAFF_ACCESS_PASSWORD` in the host environment; optionally set `STAFF_FALLBACK_PASSWORD` for a fallback when unset.
 
 Staff URL: **`/staff/login`** → after login you get **`/staff`** (queue) and **`/analytics`**.
 
@@ -93,7 +96,7 @@ Staff URL: **`/staff/login`** → after login you get **`/staff`** (queue) and *
 
 ---
 
-## 5) Judging / 4-Device Setup
+## 5) Multi-device setup (testing)
 
 Use one base URL (e.g. **https://carepilot-urgent.onrender.com** or **http://localhost:8000**):
 
@@ -199,11 +202,11 @@ To send vitals **from hardware** (SpO2, HR, temp, BP) into the app:
 - Open **http://localhost:8000/kiosk-station** — the live view and QR scan use your MacBook camera.
 - If the camera still doesn’t open (e.g. with `opencv-python-headless`), install the full OpenCV for local dev: `pip install opencv-python` (then run the app again). The Docker/deploy build can keep using headless.
 
-**Jetson Nano (production kiosk):**
+**Jetson (Nano / Orin Nano) production kiosk:**
 
-- **Camera:** `ls /dev/video*` and `v4l2-ctl --list-devices`. Optional `CAMERA_PIPELINE` for GStreamer (see DEPLOY/README for a low-latency example).
-- **OpenCV on Nano:** `sudo apt-get install python3-opencv` if needed.
-- **Kiosk:** Open `http://<nano-ip>:8000/kiosk-station` (or your deployed URL). Camera + code entry + voice run in the browser.
+- **Camera:** `ls /dev/video*` and `v4l2-ctl --list-devices`. Optional `CAMERA_PIPELINE` for GStreamer (CSI cameras). **See [docs/JETSON-CAMERA.md](docs/JETSON-CAMERA.md)** for connecting the Jetson camera so anyone opening the kiosk can see it (run app on Jetson, or remote-stream options).
+- **OpenCV on Jetson:** `sudo apt-get install python3-opencv` (with GStreamer if using CSI).
+- **Kiosk:** Open `http://<jetson-ip>:8000/kiosk-station`. Camera + code entry + voice run in the browser.
 - **Sensors:** Use **scripts/sensor_bridge.py** and **[SENSORS.md](SENSORS.md)** to send vitals by token.
 
 ---

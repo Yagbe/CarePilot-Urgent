@@ -1,3 +1,12 @@
+/**
+ * Kiosk page: linear flow for patient check-in at a physical kiosk.
+ *
+ * Flow: (1) Scan — QR or manual code → check-in
+ *       (2) Vitals — use provided sensors, enter BP/pulse/temp; triage runs and bot speaks condition level
+ *       (3) Chat — CarePilot AI (wait time, wayfinding, vitals); "Session done" resets to scan
+ *
+ * Uses /camera/stream for live feed, getAiSpeech (OpenAI TTS) with browser fallback, and postAiChat with token for context.
+ */
 import { useEffect, useState, useRef, useCallback } from "react";
 import { Topbar } from "@/components/layout/Topbar";
 import { Button } from "@/components/ui/button";
@@ -9,6 +18,7 @@ import { motion } from "framer-motion";
 import { Mic, Activity } from "lucide-react";
 import { VitalsForm } from "@/components/vitals/VitalsForm";
 
+/** Kiosk steps: scan (QR/code) → vitals → chat, then session done back to scan */
 type KioskStep = "scan" | "vitals" | "chat";
 
 function beep() {
