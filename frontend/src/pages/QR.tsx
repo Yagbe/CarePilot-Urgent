@@ -3,10 +3,12 @@ import { useEffect, useState } from "react";
 import { Topbar } from "@/components/layout/Topbar";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { motion } from "framer-motion";
+import { t, getLanguage, type Language } from "@/lib/i18n";
 
 export function QR() {
   const { pid } = useParams<{ pid: string }>();
   const [data, setData] = useState<{ token: string; display_name: string } | null>(null);
+  const [lang, setLang] = useState<Language>(getLanguage());
 
   useEffect(() => {
     if (!pid) return;
@@ -14,6 +16,9 @@ export function QR() {
       .then((r) => (r.ok ? r.json() : null))
       .then(setData)
       .catch(() => setData(null));
+    const handleStorage = () => setLang(getLanguage());
+    window.addEventListener("storage", handleStorage);
+    return () => window.removeEventListener("storage", handleStorage);
   }, [pid]);
 
   return (
@@ -27,7 +32,7 @@ export function QR() {
         >
           <Card>
             <CardHeader>
-              <CardTitle>Your Check-in Details</CardTitle>
+              <CardTitle>{t("qr.title", lang)}</CardTitle>
               <CardDescription>{data?.display_name ?? "…"}</CardDescription>
             </CardHeader>
             <CardContent>
@@ -35,13 +40,13 @@ export function QR() {
                 {data?.token ?? "—"}
               </div>
               <p className="mt-2 text-sm text-muted-foreground">
-                Show this token or QR at the <strong>check-in kiosk</strong> when you arrive at the hospital.
+                {t("qr.showAtKiosk", lang)}
               </p>
             </CardContent>
           </Card>
           <Card>
             <CardHeader>
-              <CardTitle>QR Check-in</CardTitle>
+              <CardTitle>{t("qr.qrTitle", lang)}</CardTitle>
             </CardHeader>
             <CardContent className="text-center">
               {pid ? (
@@ -53,11 +58,15 @@ export function QR() {
                   className="mx-auto rounded-lg border border-border p-1"
                 />
               ) : null}
-              <p className="mt-2 text-sm text-muted-foreground">Show this at the kiosk or use code: <strong>{pid}</strong></p>
+              <p className="mt-2 text-sm text-muted-foreground">
+                {t("qr.showAtKioskOrCode", lang)} <strong>{pid}</strong>
+              </p>
             </CardContent>
           </Card>
         </motion.div>
-        <p className="text-center text-muted-foreground text-sm">The check-in kiosk is at the hospital; bring this QR or token when you arrive.</p>
+        <p className="text-center text-muted-foreground text-sm">
+          {t("qr.footer", lang)}
+        </p>
       </main>
     </>
   );

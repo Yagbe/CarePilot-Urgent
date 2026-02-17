@@ -3,14 +3,16 @@ import { Stethoscope, Shield, LayoutDashboard, BarChart3, LogOut } from "lucide-
 import { Button } from "@/components/ui/button";
 import { cn } from "@/lib/utils";
 import { LanguageSwitcher } from "@/components/LanguageSwitcher";
+import { t, getLanguage } from "@/lib/i18n";
 
 const navItems = [
-  { to: "/", label: "Portal", icon: LayoutDashboard },
-  { to: "/privacy", label: "Privacy", icon: Shield },
+  { to: "/", labelKey: "nav.portal", icon: LayoutDashboard },
+  { to: "/privacy", labelKey: "nav.privacy", icon: Shield },
 ];
 
 export function Topbar({ demoMode }: { demoMode?: boolean } = {}) {
   const location = useLocation();
+  const lang = getLanguage();
   return (
     <header className="sticky top-0 z-40 border-b border-border bg-primary text-primary-foreground shadow-sm">
       <div className="mx-auto flex h-14 max-w-6xl items-center justify-between gap-4 px-4">
@@ -22,7 +24,7 @@ export function Topbar({ demoMode }: { demoMode?: boolean } = {}) {
           )}
         </div>
         <nav className="flex items-center gap-1">
-          {navItems.map(({ to, label, icon: Icon }) => (
+          {navItems.map(({ to, labelKey, icon: Icon }) => (
             <Link key={to} to={to}>
               <Button
                 variant="ghost"
@@ -33,7 +35,7 @@ export function Topbar({ demoMode }: { demoMode?: boolean } = {}) {
                 )}
               >
                 <Icon className="mr-1.5 h-4 w-4" />
-                {label}
+                {t(labelKey, lang)}
               </Button>
             </Link>
           ))}
@@ -46,6 +48,7 @@ export function Topbar({ demoMode }: { demoMode?: boolean } = {}) {
 
 export function StaffTopbar({ demoMode }: { demoMode?: boolean } = {}) {
   const location = useLocation();
+  const lang = getLanguage();
   return (
     <header className="sticky top-0 z-40 border-b border-border bg-primary text-primary-foreground shadow-sm">
       <div className="mx-auto flex h-14 max-w-6xl items-center justify-between gap-4 px-4">
@@ -59,7 +62,7 @@ export function StaffTopbar({ demoMode }: { demoMode?: boolean } = {}) {
         <nav className="flex items-center gap-1">
           <Link to="/">
             <Button variant="ghost" size="sm" className="text-primary-foreground/90 hover:bg-primary-foreground/20 hover:text-primary-foreground">
-              Portal
+              {t("nav.portal", lang)}
             </Button>
           </Link>
           <Link to="/staff">
@@ -71,7 +74,7 @@ export function StaffTopbar({ demoMode }: { demoMode?: boolean } = {}) {
                 location.pathname === "/staff" && "bg-primary-foreground/20"
               )}
             >
-              Staff
+              {t("nav.staff", lang)}
             </Button>
           </Link>
           <Link to="/analytics">
@@ -84,13 +87,13 @@ export function StaffTopbar({ demoMode }: { demoMode?: boolean } = {}) {
               )}
             >
               <BarChart3 className="mr-1.5 h-4 w-4" />
-              Analytics
+              {t("nav.analytics", lang)}
             </Button>
           </Link>
           <form method="post" action="/staff/logout" className="inline">
             <Button type="submit" variant="ghost" size="sm" className="text-primary-foreground/90 hover:bg-primary-foreground/20">
               <LogOut className="mr-1.5 h-4 w-4" />
-              Logout
+              {t("nav.logout", lang)}
             </Button>
           </form>
         </nav>

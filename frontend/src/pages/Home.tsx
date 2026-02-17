@@ -6,18 +6,23 @@ import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { getDemoMode } from "@/api/client";
 import { motion } from "framer-motion";
+import { t, getLanguage, type Language } from "@/lib/i18n";
 
 export function Home() {
   const [demoMode, setDemoMode] = useState(false);
+  const [lang, setLang] = useState<Language>(getLanguage());
   useEffect(() => {
     getDemoMode().then((d) => setDemoMode(d.demo_mode)).catch(() => {});
+    const handleStorage = () => setLang(getLanguage());
+    window.addEventListener("storage", handleStorage);
+    return () => window.removeEventListener("storage", handleStorage);
   }, []);
 
   const stations = [
-    { to: "/patient-station", title: "Patient Access", desc: "Complete intake and receive your QR/token for check-in.", icon: User },
-    { to: "/kiosk-station", title: "Kiosk Check-in", desc: "QR scan and token entry for patient check-in at the clinic.", icon: ScanLine },
-    { to: "/waiting-room-station", title: "Waiting Room Display", desc: "Token-only queue board for TVs.", icon: Tv },
-    { to: "/staff-station", title: "Staff Workspace", desc: "Secure staff operations and analytics.", icon: Briefcase },
+    { to: "/patient-station", titleKey: "home.patientAccess", descKey: "home.patientAccessDesc", icon: User },
+    { to: "/kiosk-station", titleKey: "home.kiosk", descKey: "home.kioskDesc", icon: ScanLine },
+    { to: "/waiting-room-station", titleKey: "home.waitingRoom", descKey: "home.waitingRoomDesc", icon: Tv },
+    { to: "/staff-station", titleKey: "home.staff", descKey: "home.staffDesc", icon: Briefcase },
   ];
   return (
     <>
@@ -30,15 +35,15 @@ export function Home() {
         >
           <Card>
             <CardHeader>
-              <CardTitle>Hospital Access Portal</CardTitle>
+              <CardTitle>{t("home.title", lang)}</CardTitle>
               <CardDescription>
-                Choose your role-specific experience. Each area is isolated for real clinic workflows.
+                {t("home.subtitle", lang)}
               </CardDescription>
             </CardHeader>
           </Card>
         </motion.div>
         <div className="grid gap-4 sm:grid-cols-2">
-          {stations.map(({ to, title, desc, icon: Icon }, i) => (
+          {stations.map(({ to, titleKey, descKey, icon: Icon }, i) => (
             <motion.div
               key={to}
               initial={{ opacity: 0, y: 8 }}
@@ -49,13 +54,13 @@ export function Home() {
                 <CardHeader>
                   <CardTitle className="flex items-center gap-2">
                     <Icon className="h-5 w-5" />
-                    {title}
+                    {t(titleKey, lang)}
                   </CardTitle>
-                  <CardDescription>{desc}</CardDescription>
+                  <CardDescription>{t(descKey, lang)}</CardDescription>
                 </CardHeader>
                 <CardContent>
                   <Button asChild>
-                    <Link to={to}>Open</Link>
+                    <Link to={to}>{t("home.open", lang)}</Link>
                   </Button>
                 </CardContent>
               </Card>
@@ -64,15 +69,15 @@ export function Home() {
         </div>
         <Card>
           <CardHeader>
-            <CardTitle className="text-lg">Direct URLs (or use the Open buttons above)</CardTitle>
-            <CardDescription>Use one URL per device. Avoid typing in the address bar—use these links or the buttons above so the browser doesn’t open a search.</CardDescription>
+            <CardTitle className="text-lg">{t("home.directUrlsTitle", lang)}</CardTitle>
+            <CardDescription>{t("home.directUrlsDesc", lang)}</CardDescription>
           </CardHeader>
           <CardContent>
             <ul className="text-muted-foreground text-sm space-y-1">
-              <li>Patient: <strong>/patient-station</strong></li>
-              <li>Kiosk: <strong>/kiosk-station</strong> or <strong>/kiosk</strong></li>
-              <li>Waiting room TV: <strong>/waiting-room-station</strong></li>
-              <li>Staff: <strong>/staff-station</strong></li>
+              <li>{t("home.directPatient", lang)}: <strong>/patient-station</strong></li>
+              <li>{t("home.directKiosk", lang)}: <strong>/kiosk-station</strong> or <strong>/kiosk</strong></li>
+              <li>{t("home.directWaitingRoom", lang)}: <strong>/waiting-room-station</strong></li>
+              <li>{t("home.directStaff", lang)}: <strong>/staff-station</strong></li>
             </ul>
           </CardContent>
         </Card>

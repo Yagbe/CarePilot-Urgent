@@ -20,6 +20,7 @@ import {
 import { UserCheck, CheckCircle, Copy, Activity, Radio } from "lucide-react";
 import { motion } from "framer-motion";
 import { LiveVitalsPanel } from "@/components/vitals/LiveVitalsPanel";
+import { t, getLanguage, type Language } from "@/lib/i18n";
 
 function formatVitals(v: StaffQueueItem["vitals_latest"]): string {
   if (!v) return "pending";
@@ -75,6 +76,7 @@ export function Staff() {
   const [billingLoading, setBillingLoading] = useState(false);
   const [billingStatus, setBillingStatus] = useState<{ status: string; claimId?: string } | null>(null);
   const billingCardRef = useRef<HTMLDivElement>(null);
+  const [lang, setLang] = useState<Language>(getLanguage());
 
   // Scroll billing panel into view when opened so it's visible below the queue
   useEffect(() => {
@@ -107,6 +109,12 @@ export function Staff() {
     return () => clearInterval(t);
   }, []);
 
+  useEffect(() => {
+    const handleStorage = () => setLang(getLanguage());
+    window.addEventListener("storage", handleStorage);
+    return () => window.removeEventListener("storage", handleStorage);
+  }, []);
+
   const updateStatus = async (pid: string, status: string) => {
     setUpdating(pid);
     try {
@@ -129,7 +137,7 @@ export function Staff() {
   };
 
   const handleReset = () => {
-    if (!window.confirm("Reset all patients and demo data?")) return;
+    if (!window.confirm(t("staff.resetConfirm", lang))) return;
     postDemoReset().then(load).catch(() => {});
   };
 
@@ -151,7 +159,7 @@ export function Staff() {
       <>
         <StaffTopbar />
         <main className="mx-auto max-w-4xl px-4 py-8">
-          <p className="text-muted-foreground">Loading…</p>
+          <p className="text-muted-foreground">{t("staff.loading", lang)}</p>
         </main>
       </>
     );
@@ -175,11 +183,11 @@ export function Staff() {
         <div className="grid gap-4 sm:grid-cols-3">
           <Card>
             <CardHeader>
-              <CardTitle className="text-muted-foreground text-sm">Providers Available</CardTitle>
+              <CardTitle className="text-muted-foreground text-sm">{t("staff.providersAvailable", lang)}</CardTitle>
               <span className="text-3xl font-bold">{data.provider_count}</span>
             </CardHeader>
             <CardContent>
-              <label className="text-muted-foreground text-sm">Provider count</label>
+              <label className="text-muted-foreground text-sm">{t("staff.providerCount", lang)}</label>
               <select
                 className="mt-1 w-full rounded-lg border border-input bg-background px-3 py-2 text-sm"
                 value={data.provider_count}
@@ -193,14 +201,16 @@ export function Staff() {
           </Card>
           <Card>
             <CardHeader>
-              <CardTitle className="text-muted-foreground text-sm">Current Queue</CardTitle>
+              <CardTitle className="text-muted-foreground text-sm">{t("staff.currentQueue", lang)}</CardTitle>
               <span className="text-3xl font-bold">{data.items.length}</span>
             </CardHeader>
           </Card>
           <Card>
             <CardHeader>
-              <CardTitle className="text-muted-foreground text-sm">Average Wait / Lane Mix</CardTitle>
-              <span className="text-2xl font-bold">{data.avg_wait_min ?? 0} min</span>
+              <CardTitle className="text-muted-foreground text-sm">{t("staff.avgWaitLaneMix", lang)}</CardTitle>
+              <span className="text-2xl font-bold">
+                {t("staff.estimatedWait", lang)} {data.avg_wait_min ?? 0} min
+              </span>
               <p className="text-muted-foreground text-xs">{laneMix}</p>
             </CardHeader>
           </Card>
@@ -208,19 +218,21 @@ export function Staff() {
 
         <Card>
           <CardContent className="flex flex-wrap gap-2 pt-6">
-            <Button variant="secondary" onClick={handleSeedDemo}>Seed demo patients</Button>
+            <Button variant="secondary" onClick={handleSeedDemo}>{t("staff.seedDemo", lang)}</Button>
             <Button variant="secondary" onClick={handleSimVitalsAll} disabled={data.items.length === 0}>
-              Sim vitals for all
+              {t("staff.simVitalsAll", lang)}
             </Button>
-            <Button variant="destructive" onClick={handleReset}>Reset</Button>
+            <Button variant="destructive" onClick={handleReset}>{t("staff.reset", lang)}</Button>
           </CardContent>
         </Card>
 
-        <h2 className="text-xl font-semibold">Live Staff Queue</h2>
+        <h2 className="text-xl font-semibold">{t("staff.liveQueueTitle", lang)}</h2>
         <div className="space-y-4">
           {data.items.length === 0 && (
             <Card>
-              <CardContent className="py-6 text-muted-foreground text-center">No patients in queue.</CardContent>
+              <CardContent className="py-6 text-muted-foreground text-center">
+                {t("staff.noPatients", lang)}
+              </CardContent>
             </Card>
           )}
           {data.items.map((item, i) => (
@@ -243,27 +255,31 @@ export function Staff() {
                   }`}>
                     {item.status_label ?? item.status}
                   </span>
-                  <span className="rounded-full bg-muted px-2 py-0.5 text-xs">{item.lane ?? "Standard"} lane</span>
-                  <span className="ml-2 text-muted-foreground text-xs">Est wait {item.estimated_wait_min ?? 0} min</span>
+                  <span className="rounded-full bg-muted px-2 py-0.5 text-xs">
+                    {t("staff.waitLane", lang).replace("{lane}", item.lane ?? "Standard")}
+                  </span>
+                  <span className="ml-2 text-muted-foreground text-xs">
+                    {t("staff.estWait", lang).replace("{mins}", String(item.estimated_wait_min ?? 0))}
+                  </span>
                 </div>
                 <div className="flex flex-wrap gap-2">
                   <Button size="sm" variant="default" disabled={updating === item.id} onClick={() => updateStatus(item.id, "called")}>
-                    <UserCheck className="mr-1 h-4 w-4" /> Call
+                    <UserCheck className="mr-1 h-4 w-4" /> {t("staff.call", lang)}
                   </Button>
                   <Button size="sm" variant="default" disabled={updating === item.id} onClick={() => updateStatus(item.id, "in_room")}>
-                    <UserCheck className="mr-1 h-4 w-4" /> In Room
+                    <UserCheck className="mr-1 h-4 w-4" /> {t("staff.inRoom", lang)}
                   </Button>
                   <Button size="sm" variant="secondary" disabled={updating === item.id} onClick={() => updateStatus(item.id, "done")}>
-                    <CheckCircle className="mr-1 h-4 w-4" /> Done
+                    <CheckCircle className="mr-1 h-4 w-4" /> {t("staff.done", lang)}
                   </Button>
                   <Button size="sm" variant="secondary" disabled={updating === item.id} onClick={() => handleSimVitals(item.id)}>
-                    <Activity className="mr-1 h-4 w-4" /> Sim Vitals
+                    <Activity className="mr-1 h-4 w-4" /> {t("staff.simVitals", lang)}
                   </Button>
                   <Button size="sm" variant="outline" onClick={() => handleCopyNote(item)}>
-                    <Copy className="mr-1 h-4 w-4" /> Copy Note
+                    <Copy className="mr-1 h-4 w-4" /> {t("staff.copyNote", lang)}
                   </Button>
                   <Button size="sm" variant="outline" onClick={() => setLiveVitalsPatient(item)}>
-                    <Radio className="mr-1 h-4 w-4" /> Live Vitals
+                    <Radio className="mr-1 h-4 w-4" /> {t("staff.liveVitals", lang)}
                   </Button>
                   <Button size="sm" variant="outline" onClick={() => setBillingPatient(item)}>
                     Billing
@@ -272,31 +288,49 @@ export function Staff() {
               </div>
               <hr className="my-3 border-border" />
               <div className="text-sm">
-                <p><strong>Chief complaint:</strong> {item.chief_complaint ?? "—"}</p>
-                <p><strong>Symptoms:</strong> {item.symptoms ?? "—"}</p>
+                <p>
+                  <strong>{t("staff.chiefComplaint", lang)}</strong> {item.chief_complaint ?? "—"}
+                </p>
+                <p>
+                  <strong>{t("staff.symptoms", lang)}</strong> {item.symptoms ?? "—"}
+                </p>
                 {item.symptom_list?.length ? (
                   <ul className="list-inside list-disc text-muted-foreground">{item.symptom_list.map((s, j) => <li key={j}>{s}</li>)}</ul>
                 ) : null}
-                <p className="text-muted-foreground"><strong>Duration:</strong> {item.duration_text ?? "—"}</p>
                 <p className="text-muted-foreground">
-                  <strong>Red flags:</strong>{" "}
+                  <strong>{t("staff.duration", lang)}</strong> {item.duration_text ?? "—"}
+                </p>
+                <p className="text-muted-foreground">
+                  <strong>{t("staff.redFlags", lang)}</strong>{" "}
                   {item.red_flags?.length ? (
                     <span className="rounded bg-destructive/20 px-1.5 py-0.5 text-destructive">{item.red_flags.join(", ")}</span>
                   ) : (
-                    "none detected"
+                    t("staff.noneDetected", lang)
                   )}
                 </p>
               </div>
               <Card className="mt-3 bg-muted/30">
                 <CardContent className="py-3 text-sm">
-                  <strong>AI Structured Intake (Operational, non-diagnostic)</strong>
-                  <p className="text-muted-foreground">Cluster: {item.ai_cluster ?? "—"}</p>
-                  <p className="text-muted-foreground">Complexity: {item.ai_complexity ?? "—"}</p>
-                  <p className="text-muted-foreground">Estimated visit: {item.ai_visit_duration ?? 0}-{(item.ai_visit_duration ?? 0) + 10} min</p>
-                  <p className="text-muted-foreground">Estimated wait: {item.estimated_wait_min ?? 0} min</p>
-                  <p className="text-muted-foreground">Vitals: {formatVitals(item.vitals_latest)}</p>
+                  <strong>{t("staff.aiStructuredIntake", lang)}</strong>
+                  <p className="text-muted-foreground">
+                    {t("staff.cluster", lang)} {item.ai_cluster ?? "—"}
+                  </p>
+                  <p className="text-muted-foreground">
+                    {t("staff.complexity", lang)} {item.ai_complexity ?? "—"}
+                  </p>
+                  <p className="text-muted-foreground">
+                    {t("staff.estimatedVisit", lang)} {item.ai_visit_duration ?? 0}-{(item.ai_visit_duration ?? 0) + 10} min
+                  </p>
+                  <p className="text-muted-foreground">
+                    {t("staff.estimatedWait", lang)} {item.estimated_wait_min ?? 0} min
+                  </p>
+                  <p className="text-muted-foreground">
+                    {t("staff.vitals", lang)} {formatVitals(item.vitals_latest)}
+                  </p>
                   {item.suggested_resources?.length ? (
-                    <p className="text-muted-foreground">Suggested resources: {item.suggested_resources.join(", ")}</p>
+                    <p className="text-muted-foreground">
+                      {t("staff.suggestedResources", lang)} {item.suggested_resources.join(", ")}
+                    </p>
                   ) : null}
                 </CardContent>
               </Card>
@@ -308,7 +342,7 @@ export function Staff() {
           <Card ref={billingCardRef} className="border-primary/30">
             <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
               <CardTitle className="text-sm">
-                Billing preview for token {billingPatient.token} ({billingPatient.full_name ?? "—"})
+                {t("staff.billingPreviewTitle", lang)} {billingPatient.token} ({billingPatient.full_name ?? "—"})
               </CardTitle>
               <Button
                 size="sm"
@@ -318,11 +352,11 @@ export function Staff() {
                   setBillingStatus(null);
                 }}
               >
-                Close
+                {t("staff.close", lang)}
               </Button>
             </CardHeader>
             <CardContent className="space-y-2 text-xs text-muted-foreground">
-              <p className="font-semibold text-foreground">Billing (draft – staff review required)</p>
+              <p className="font-semibold text-foreground">{t("staff.billingDraft", lang)}</p>
               <div className="flex flex-wrap gap-2">
                 <Button
                   size="sm"
@@ -341,7 +375,7 @@ export function Staff() {
                     }
                   }}
                 >
-                  Build bundle (draft)
+                  {t("staff.buildBundle", lang)}
                 </Button>
                 <Button
                   size="sm"
@@ -360,7 +394,7 @@ export function Staff() {
                     }
                   }}
                 >
-                  Submit claim (mock)
+                  {t("staff.submitClaim", lang)}
                 </Button>
                 <Button
                   size="sm"
@@ -379,18 +413,18 @@ export function Staff() {
                     }
                   }}
                 >
-                  Refresh status
+                  {t("staff.refreshStatus", lang)}
                 </Button>
               </div>
               {billingStatus && (
                 <p>
-                  Status: <span className="font-semibold text-foreground">{billingStatus.status}</span>
-                  {billingStatus.claimId ? ` • Claim ID: ${billingStatus.claimId}` : null}
+                  {t("staff.status", lang)}{" "}
+                  <span className="font-semibold text-foreground">{billingStatus.status}</span>
+                  {billingStatus.claimId ? ` • ${t("staff.claimId", lang)} ${billingStatus.claimId}` : null}
                 </p>
               )}
               <p className="mt-1">
-                Coding suggestions in each bundle are <strong>draft only</strong> and require staff billing review
-                before any real payer submission.
+                {t("staff.billingDisclaimer", lang)}
               </p>
             </CardContent>
           </Card>
