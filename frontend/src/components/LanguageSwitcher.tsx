@@ -1,6 +1,6 @@
 import { Button } from "@/components/ui/button";
 import { Languages } from "lucide-react";
-import { Language, getLanguage, setLanguage, t } from "@/lib/i18n";
+import { Language, getLanguage, setLanguage } from "@/lib/i18n";
 import { useState, useEffect } from "react";
 
 export function LanguageSwitcher() {

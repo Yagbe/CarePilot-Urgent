@@ -70,16 +70,21 @@ export function KioskCamera() {
     return () => window.removeEventListener("storage", handleStorageChange);
   }, []);
 
-  useEffect(() => {
-    if (recognitionRef.current) {
-      recognitionRef.current.lang = lang === "ar" ? "ar-SA" : "en-US";
-    }
-  }, [lang]);
+  interface SpeechRecognitionLike {
+    start: () => void;
+    abort: () => void;
+    lang?: string;
+    interimResults: boolean;
+    maxAlternatives: number;
+    onstart: () => void;
+    onend: () => void;
+    onresult: (e: { results?: { [i: number]: { [j: number]: { transcript?: string } } } }) => void;
+  }
 
   const [voiceState, setVoiceState] = useState<"idle" | "listening" | "processing" | "speaking">("idle");
   const [transcript, setTranscript] = useState<TranscriptBubble[]>([]);
   const [redFlagAlert, setRedFlagAlert] = useState(false);
-  const recognitionRef = useRef<{ start: () => void; abort: () => void } | null>(null);
+  const recognitionRef = useRef<SpeechRecognitionLike | null>(null);
   const announcedWaitRef = useRef(false);
   const [autoVitals, setAutoVitals] = useState<VitalsReading | null>(null);
   const [triageResult, setTriageResult] = useState<TriageResult | null>(null);
@@ -224,27 +229,19 @@ export function KioskCamera() {
           if (!cancelled) await submitCode(v, true);
         }
       } catch {
-        if (!cancelled) setStatus(t("kiosk.cameraUnavailable", getLanguage()));
+        if (!cancelled) {
+          const currentLang = getLanguage();
+          setStatus(t("kiosk.cameraUnavailable", currentLang));
+        }
       }
     };
     poll();
-    const t = setInterval(poll, 200);
+    const intervalId = setInterval(poll, 200);
     return () => {
       cancelled = true;
-      clearInterval(t);
+      clearInterval(intervalId);
     };
   }, [scanningEnabled, submitCode]);
-
-  interface SpeechRecognitionLike {
-    start: () => void;
-    abort: () => void;
-    lang: string;
-    interimResults: boolean;
-    maxAlternatives: number;
-    onstart: () => void;
-    onend: () => void;
-    onresult: (e: { results?: { [i: number]: { [j: number]: { transcript?: string } } } }) => void;
-  }
 
   useEffect(() => {
     const Win = window as unknown as { SpeechRecognition?: new () => SpeechRecognitionLike; webkitSpeechRecognition?: new () => SpeechRecognitionLike };
@@ -252,7 +249,9 @@ export function KioskCamera() {
     if (!Rec) return;
     const rec = new Rec() as SpeechRecognitionLike;
     recognitionRef.current = rec;
-    rec.lang = lang === "ar" ? "ar-SA" : "en-US";
+    if (rec.lang !== undefined) {
+      rec.lang = lang === "ar" ? "ar-SA" : "en-US";
+    }
     rec.interimResults = false;
     rec.maxAlternatives = 1;
     rec.onstart = () => {
@@ -327,8 +326,8 @@ export function KioskCamera() {
     greetedRef.current = true;
     const msg =
       "Hello, and welcome. Please use the provided sensors to record your blood pressure, pulse, and body temperature. Enter the readings in the slots below.";
-    const t = setTimeout(() => speakWithTts(msg), 400);
-    return () => clearTimeout(t);
+    const timeoutId = setTimeout(() => speakWithTts(msg), 400);
+    return () => clearTimeout(timeoutId);
   }, [successCard, kioskStep, speakWithTts]);
 
   // Run triage when vitals appear (e.g. from effect when autoVitals set by polling or elsewhere)
