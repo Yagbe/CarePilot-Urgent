@@ -74,7 +74,6 @@ export function Staff() {
   const [billingPatient, setBillingPatient] = useState<StaffQueueItem | null>(null);
   const [billingLoading, setBillingLoading] = useState(false);
   const [billingStatus, setBillingStatus] = useState<{ status: string; claimId?: string } | null>(null);
-  const [billingPatient, setBillingPatient] = useState<StaffQueueItem | null>(null);
 
   const load = () => {
     getStaffQueue()
