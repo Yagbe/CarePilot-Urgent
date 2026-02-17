@@ -569,6 +569,13 @@ def _extract_duration_days(duration: str) -> int:
     return n
 
 
+def _has_arabic(text: str) -> bool:
+    """Detect whether the text contains Arabic characters (rough heuristic)."""
+    if not text:
+        return False
+    return bool(re.search(r"[\u0600-\u06FF]", text))
+
+
 def _parse_age_from_dob(dob: str) -> Optional[int]:
     if not dob:
         return None
@@ -615,15 +622,27 @@ def ai_structure_symptoms(symptoms: str, duration: str, age_optional: Optional[i
         resources.append("Hydration assessment")
 
     flags_text = ", ".join(flags) if flags else "none detected"
-    summary = (
-        f"Chief complaint: {chief}. "
-        f"Cluster: {cluster}. "
-        f"Duration: {days} day(s). "
-        f"Red flags: {flags_text}. "
-        f"Operational complexity: {complexity}. "
-        f"Estimated visit duration: {visit_duration}-{visit_duration+10} min. "
-        "Non-diagnostic operational summary for triage workflow only."
-    )
+    if _has_arabic(symptoms):
+        # Arabic summary (non-diagnostic, operational only)
+        summary = (
+            f"الشكوى الرئيسية: {chief}. "
+            f"المجموعة التشغيلية: {cluster}. "
+            f"المدة: {days} يوم/أيام. "
+            f"علامات الخطر: {flags_text or 'لا توجد علامات خطورة واضحة'}. "
+            f"درجة التعقيد التشغيلي: {complexity}. "
+            f"المدة التقديرية للزيارة: {visit_duration}-{visit_duration+10} دقيقة. "
+            "هذا تلخيص تشغيلي فقط لدعم تنظيم العمل، وليس تشخيصًا طبيًا."
+        )
+    else:
+        summary = (
+            f"Chief complaint: {chief}. "
+            f"Cluster: {cluster}. "
+            f"Duration: {days} day(s). "
+            f"Red flags: {flags_text}. "
+            f"Operational complexity: {complexity}. "
+            f"Estimated visit duration: {visit_duration}-{visit_duration+10} min. "
+            "Non-diagnostic operational summary for triage workflow only."
+        )
 
     return {
         "chief_complaint": chief,
@@ -1456,7 +1475,7 @@ Rules:
 - Do not give medical advice, diagnose, or interpret symptoms. If someone describes serious symptoms (chest pain, difficulty breathing, etc.), tell them to alert clinic staff immediately.
 - Keep replies short (1–3 sentences). Speak as if to a patient at a kiosk.
 - For wait time: when patient/wait context is provided below, use it to answer (e.g. "Your estimated wait is about X minutes. You're number N in line."). Add that they can check the waiting room screen or ask staff for the most up-to-date info. If no wait context is provided, say you don't have their wait data and they can check the screen or ask staff.
-- For language/translation: say the kiosk can support multiple languages and they can choose on screen.
+- Language: reply in the same language the user is using. If the user writes in Arabic, respond fully in Arabic. If they write in English, respond in English.
 - When the patient asks for THEIR vitals or "what are my numbers": if vitals are provided below, read them back in a friendly sentence (e.g. "Your latest readings are ..."). Do not interpret or diagnose. If no vitals are provided below, say to place one finger on the sensor and hold still until they see confirmation.
 - For general sensor instructions (when they're not asking for their own readings): say to place one finger on the sensor and hold still until they see confirmation."""
 
