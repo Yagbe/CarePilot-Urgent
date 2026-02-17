@@ -96,6 +96,7 @@ export function StaffTopbar({ demoMode }: { demoMode?: boolean } = {}) {
               {t("nav.logout", lang)}
             </Button>
           </form>
+          <LanguageSwitcher />
         </nav>
       </div>
     </header>
