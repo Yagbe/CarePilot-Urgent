@@ -267,7 +267,10 @@ export function KioskCamera() {
       setVoiceState("processing");
       postAiChat(text, { token: successCard?.token })
         .then((data) => {
-          setTranscript((prev) => [{ role: "assistant", text: data.reply ?? "Unable to respond." }, ...prev]);
+          setTranscript((prev) => [
+            { role: "assistant", text: data.reply ?? t("kiosk.aiNoResponse", lang) },
+            ...prev,
+          ]);
           if (data.red_flags?.length) {
             setRedFlagAlert(true);
             beep();
@@ -280,7 +283,10 @@ export function KioskCamera() {
           }
         })
         .catch(() => {
-          setTranscript((prev) => [{ role: "assistant", text: "Assistant unavailable right now." }, ...prev]);
+          setTranscript((prev) => [
+            { role: "assistant", text: t("kiosk.aiUnavailableShort", lang) },
+            ...prev,
+          ]);
           setVoiceState("idle");
         });
     };
@@ -304,7 +310,7 @@ export function KioskCamera() {
     setRedFlagAlert(false);
     try {
       const data = await postAiChat(msg, { token: successCard?.token });
-      setTranscript((prev) => [...prev, { role: "assistant", text: data.reply ?? "No response." }]);
+      setTranscript((prev) => [...prev, { role: "assistant", text: data.reply ?? t("kiosk.aiNoResponse", lang) }]);
       if (data.red_flags?.length) {
         setRedFlagAlert(true);
         beep();
@@ -314,7 +320,10 @@ export function KioskCamera() {
       }
       setTimeout(() => chatEndRef.current?.scrollIntoView({ behavior: "smooth" }), 100);
     } catch {
-      setTranscript((prev) => [...prev, { role: "assistant", text: "Sorry, the AI assistant is unavailable. Please try again or ask staff." }]);
+      setTranscript((prev) => [
+        ...prev,
+        { role: "assistant", text: t("kiosk.aiUnavailable", lang) },
+      ]);
     } finally {
       setChatSending(false);
     }
@@ -324,8 +333,7 @@ export function KioskCamera() {
   useEffect(() => {
     if (!successCard || kioskStep !== "vitals" || greetedRef.current) return;
     greetedRef.current = true;
-    const msg =
-      "Hello, and welcome. Please use the provided sensors to record your blood pressure, pulse, and body temperature. Enter the readings in the slots below.";
+    const msg = t("kiosk.vitalsIntro", lang);
     const timeoutId = setTimeout(() => speakWithTts(msg), 400);
     return () => clearTimeout(timeoutId);
   }, [successCard, kioskStep, speakWithTts]);
@@ -372,12 +380,13 @@ export function KioskCamera() {
     if (!successCard || !triageResult || triageSpokenRef.current) return;
     if (kioskStep !== "vitals" && kioskStep !== "chat") return;
     triageSpokenRef.current = true;
+    const currentLang = lang;
     const msg =
       triageResult.priority === "high"
-        ? `Based on the vitals you entered, your condition level is high. ${triageResult.ai_script}`
+        ? t("kiosk.triageHigh", currentLang).replace("{script}", triageResult.ai_script ?? "")
         : triageResult.priority === "medium"
-          ? "Based on the vitals you entered, your condition level is medium. Your vitals need a bit of attention. A nurse may check in with you. Please have a seat in the waiting room and we'll call you when it's your turn."
-          : "Based on the vitals you entered, your condition level is low. Your vitals look good. Please have a seat in the waiting room. We'll call you when it's your turn.";
+          ? t("kiosk.triageMedium", currentLang)
+          : t("kiosk.triageLow", currentLang);
     if (msg) speakWithTts(msg);
   }, [successCard, kioskStep, triageResult, speakWithTts]);
 
@@ -387,9 +396,13 @@ export function KioskCamera() {
     if (kioskStep !== "vitals" && kioskStep !== "chat") return;
     announcedWaitRef.current = true;
     const id = setTimeout(() => {
+      const currentLang = lang;
       const mins = successCard.estimated_wait_min;
-      const waitText = mins <= 0 ? "a short time" : `${mins} minute${mins !== 1 ? "s" : ""}`;
-      const msg = `Your estimated wait is ${waitText}. When you're ready, tap Continue to chat if you have any questions.`;
+      const waitText =
+        mins <= 0
+          ? t("kiosk.waitShort", currentLang)
+          : `${mins} ${t("kiosk.minutes", currentLang)}`;
+      const msg = t("kiosk.waitAnnouncement", currentLang).replace("{wait}", waitText);
       speakWithTts(msg);
     }, 4000);
     return () => clearTimeout(id);
@@ -400,7 +413,8 @@ export function KioskCamera() {
     setAutoVitals(null);
     setTriageResult(null);
     setScanningEnabled(true);
-    setStatus("Scanning for QR…");
+    const currentLang = getLanguage();
+    setStatus(t("kiosk.scanning", currentLang));
     setTranscript([]);
     setChatInput("");
     setRedFlagAlert(false);
