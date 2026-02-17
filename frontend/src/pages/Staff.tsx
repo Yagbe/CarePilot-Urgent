@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { useNavigate } from "react-router-dom";
 import { StaffTopbar } from "@/components/layout/Topbar";
 import { Button } from "@/components/ui/button";
@@ -74,6 +74,14 @@ export function Staff() {
   const [billingPatient, setBillingPatient] = useState<StaffQueueItem | null>(null);
   const [billingLoading, setBillingLoading] = useState(false);
   const [billingStatus, setBillingStatus] = useState<{ status: string; claimId?: string } | null>(null);
+  const billingCardRef = useRef<HTMLDivElement>(null);
+
+  // Scroll billing panel into view when opened so it's visible below the queue
+  useEffect(() => {
+    if (billingPatient && billingCardRef.current) {
+      billingCardRef.current.scrollIntoView({ behavior: "smooth", block: "start" });
+    }
+  }, [billingPatient]);
 
   const load = () => {
     getStaffQueue()
@@ -297,11 +305,21 @@ export function Staff() {
         </div>
 
         {billingPatient && (
-          <Card>
-            <CardHeader>
+          <Card ref={billingCardRef} className="border-primary/30">
+            <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
               <CardTitle className="text-sm">
                 Billing preview for token {billingPatient.token} ({billingPatient.full_name ?? "—"})
               </CardTitle>
+              <Button
+                size="sm"
+                variant="ghost"
+                onClick={() => {
+                  setBillingPatient(null);
+                  setBillingStatus(null);
+                }}
+              >
+                Close
+              </Button>
             </CardHeader>
             <CardContent className="space-y-2 text-xs text-muted-foreground">
               <p className="font-semibold text-foreground">Billing (draft – staff review required)</p>
