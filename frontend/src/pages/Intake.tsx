@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useState, useEffect } from "react";
 import { useNavigate } from "react-router-dom";
 import { Topbar } from "@/components/layout/Topbar";
 import { Button } from "@/components/ui/button";
@@ -7,10 +7,12 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { postIntake, postInsuranceEligibilityCheck } from "@/api/client";
 import { motion, AnimatePresence } from "framer-motion";
+import { getLanguage, t, setLanguage, Language } from "@/lib/i18n";
 
 const STEPS = 4;
 
 export function Intake() {
+  const [lang, setLangState] = useState<Language>(getLanguage());
   const [step, setStep] = useState(1);
   const [loading, setLoading] = useState(false);
   const [form, setForm] = useState({
@@ -19,7 +21,7 @@ export function Intake() {
     phone: "",
     dob: "",
     symptoms: "",
-    duration_text: "1 day",
+    duration_text: lang === "ar" ? "يوم واحد" : "1 day",
     arrival_window: "now",
   });
   const [useInsurance, setUseInsurance] = useState(false);
@@ -32,6 +34,19 @@ export function Intake() {
   });
   const navigate = useNavigate();
 
+  useEffect(() => {
+    const storedLang = getLanguage();
+    setLangState(storedLang);
+    setLanguage(storedLang);
+    const handleStorageChange = () => {
+      const newLang = getLanguage();
+      setLangState(newLang);
+      setLanguage(newLang);
+    };
+    window.addEventListener("storage", handleStorageChange);
+    return () => window.removeEventListener("storage", handleStorageChange);
+  }, []);
+
   const next = () => {
     if (step < STEPS) setStep((s) => s + 1);
   };
@@ -43,7 +58,7 @@ export function Intake() {
     if (!form.first_name.trim() || !form.symptoms.trim()) return;
     setLoading(true);
     try {
-      const res = await postIntake(form);
+      const res = await postIntake({ ...form, lang });
       // Optional: run insurance eligibility if enabled and consented
       if (useInsurance && insurance.consent) {
         try {
@@ -76,7 +91,7 @@ export function Intake() {
         <Card className="border-l-4 border-l-amber-500">
           <CardContent className="pt-6">
             <p className="text-sm font-medium text-amber-800 dark:text-amber-200">
-              Urgent care only. For life-threatening emergencies, call 911 or go to the nearest ER.
+              {t("common.urgentCareOnly", lang)}
             </p>
           </CardContent>
         </Card>
@@ -90,12 +105,12 @@ export function Intake() {
                     step === s ? "bg-primary text-primary-foreground" : "bg-muted text-muted-foreground"
                   }`}
                 >
-                  Step {s} of {STEPS}
+                  {t("intake.step", lang)} {s} {t("intake.of", lang)} {STEPS}
                 </span>
               ))}
             </div>
-            <CardTitle>Urgent Care Intake</CardTitle>
-            <CardDescription>Most check-ins take under 30 seconds.</CardDescription>
+            <CardTitle>{t("intake.title", lang)}</CardTitle>
+            <CardDescription>{t("intake.subtitle", lang)}</CardDescription>
           </CardHeader>
           <CardContent className="space-y-4">
             <AnimatePresence mode="wait">
@@ -108,7 +123,7 @@ export function Intake() {
                   className="space-y-4"
                 >
                   <div>
-                    <Label htmlFor="first_name">First name *</Label>
+                    <Label htmlFor="first_name">{t("intake.firstName", lang)} *</Label>
                     <Input
                       id="first_name"
                       value={form.first_name}
@@ -117,7 +132,7 @@ export function Intake() {
                     />
                   </div>
                   <div>
-                    <Label htmlFor="last_name">Last name</Label>
+                    <Label htmlFor="last_name">{t("intake.lastName", lang)}</Label>
                     <Input
                       id="last_name"
                       value={form.last_name}
@@ -125,24 +140,24 @@ export function Intake() {
                     />
                   </div>
                   <div>
-                    <Label htmlFor="phone">Phone</Label>
+                    <Label htmlFor="phone">{t("intake.phone", lang)}</Label>
                     <Input
                       id="phone"
                       type="tel"
                       value={form.phone}
                       onChange={(e) => setForm((f) => ({ ...f, phone: e.target.value }))}
-                      placeholder="Optional"
+                      placeholder={t("intake.optional", lang)}
                     />
                   </div>
                   <div>
-                    <Label htmlFor="dob">Date of birth</Label>
+                    <Label htmlFor="dob">{t("intake.dob", lang)}</Label>
                     <Input
                       id="dob"
                       type="date"
                       value={form.dob}
                       onChange={(e) => setForm((f) => ({ ...f, dob: e.target.value }))}
                     />
-                    <p className="mt-1 text-xs text-muted-foreground">YYYY-MM-DD. Future dates not allowed.</p>
+                    <p className="mt-1 text-xs text-muted-foreground">{t("intake.dobHint", lang)}</p>
                   </div>
                 </motion.div>
               )}
@@ -155,36 +170,38 @@ export function Intake() {
                   className="space-y-4"
                 >
                   <div>
-                    <Label htmlFor="symptoms">Symptoms *</Label>
+                    <Label htmlFor="symptoms">{t("intake.symptoms", lang)} *</Label>
                     <textarea
                       id="symptoms"
                       className="flex min-h-[100px] w-full rounded-lg border border-input bg-background px-3 py-2 text-sm ring-offset-background placeholder:text-muted-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
                       value={form.symptoms}
                       onChange={(e) => setForm((f) => ({ ...f, symptoms: e.target.value }))}
-                      placeholder="Describe symptoms in plain language..."
+                      placeholder={t("intake.symptomsPlaceholder", lang)}
                       required
+                      dir={lang === "ar" ? "rtl" : "ltr"}
                     />
                   </div>
                   <div>
-                    <Label htmlFor="duration_text">Symptom duration</Label>
+                    <Label htmlFor="duration_text">{t("intake.duration", lang)}</Label>
                     <Input
                       id="duration_text"
                       value={form.duration_text}
                       onChange={(e) => setForm((f) => ({ ...f, duration_text: e.target.value }))}
-                      placeholder="e.g. 2 days"
+                      placeholder={t("intake.durationPlaceholder", lang)}
+                      dir={lang === "ar" ? "rtl" : "ltr"}
                     />
                   </div>
                   <div>
-                    <Label htmlFor="arrival_window">When are you likely to arrive?</Label>
+                    <Label htmlFor="arrival_window">{t("intake.arrival", lang)}</Label>
                     <select
                       id="arrival_window"
                       className="flex h-11 w-full rounded-lg border border-input bg-background px-3 py-2 text-sm"
                       value={form.arrival_window}
                       onChange={(e) => setForm((f) => ({ ...f, arrival_window: e.target.value }))}
                     >
-                      <option value="now">Now</option>
-                      <option value="soon">In 1-2 hours</option>
-                      <option value="later">Later today</option>
+                      <option value="now">{t("intake.arrivalNow", lang)}</option>
+                      <option value="soon">{t("intake.arrivalSoon", lang)}</option>
+                      <option value="later">{t("intake.arrivalLater", lang)}</option>
                     </select>
                   </div>
                 </motion.div>
@@ -199,9 +216,9 @@ export function Intake() {
                 >
                   <div className="flex items-center justify-between">
                     <div>
-                      <Label className="font-semibold">Insurance (optional)</Label>
+                      <Label className="font-semibold">{t("intake.insurance", lang)}</Label>
                       <p className="text-xs text-muted-foreground">
-                        You can skip this step and pay cash at the clinic, or enter insurance details for eligibility checks.
+                        {t("intake.insuranceDesc", lang)}
                       </p>
                     </div>
                     <button
@@ -211,44 +228,48 @@ export function Intake() {
                       }`}
                       onClick={() => setUseInsurance((v) => !v)}
                     >
-                      {useInsurance ? "Using insurance" : "Self-pay"}
+                      {useInsurance ? t("intake.usingInsurance", lang) : t("intake.selfPay", lang)}
                     </button>
                   </div>
                   {useInsurance && (
                     <>
                       <div>
-                        <Label htmlFor="national_id">National ID / Iqama / Passport</Label>
+                        <Label htmlFor="national_id">{t("intake.nationalId", lang)}</Label>
                         <Input
                           id="national_id"
                           value={insurance.national_id}
                           onChange={(e) => setInsurance((i) => ({ ...i, national_id: e.target.value }))}
-                          placeholder="Optional identifier"
+                          placeholder={t("intake.optionalIdentifier", lang)}
+                          dir={lang === "ar" ? "rtl" : "ltr"}
                         />
                       </div>
                       <div>
-                        <Label htmlFor="insurer_name">Insurer name</Label>
+                        <Label htmlFor="insurer_name">{t("intake.insurerName", lang)}</Label>
                         <Input
                           id="insurer_name"
                           value={insurance.insurer_name}
                           onChange={(e) => setInsurance((i) => ({ ...i, insurer_name: e.target.value }))}
-                          placeholder="e.g. Bupa, Tawuniya"
+                          placeholder={t("intake.insurerPlaceholder", lang)}
+                          dir={lang === "ar" ? "rtl" : "ltr"}
                         />
                       </div>
                       <div className="grid gap-3 sm:grid-cols-2">
                         <div>
-                          <Label htmlFor="policy_number">Policy number</Label>
+                          <Label htmlFor="policy_number">{t("intake.policyNumber", lang)}</Label>
                           <Input
                             id="policy_number"
                             value={insurance.policy_number}
                             onChange={(e) => setInsurance((i) => ({ ...i, policy_number: e.target.value }))}
+                            dir={lang === "ar" ? "rtl" : "ltr"}
                           />
                         </div>
                         <div>
-                          <Label htmlFor="member_id">Member ID</Label>
+                          <Label htmlFor="member_id">{t("intake.memberId", lang)}</Label>
                           <Input
                             id="member_id"
                             value={insurance.member_id}
                             onChange={(e) => setInsurance((i) => ({ ...i, member_id: e.target.value }))}
+                            dir={lang === "ar" ? "rtl" : "ltr"}
                           />
                         </div>
                       </div>
@@ -259,9 +280,7 @@ export function Intake() {
                           checked={insurance.consent}
                           onChange={(e) => setInsurance((i) => ({ ...i, consent: e.target.checked }))}
                         />
-                        <span>
-                          I consent to sharing my information for insurance eligibility and claims processing. This does not authorize diagnosis or treatment.
-                        </span>
+                        <span>{t("intake.consent", lang)}</span>
                       </label>
                     </>
                   )}
@@ -274,11 +293,11 @@ export function Intake() {
                   animate={{ opacity: 1, x: 0 }}
                   exit={{ opacity: 0, x: -8 }}
                 >
-                  <p className="text-muted-foreground text-sm">Confirm and submit to generate your token and QR code.</p>
+                  <p className="text-muted-foreground text-sm">{t("intake.confirm", lang)}</p>
                   <ul className="mt-2 list-inside list-disc text-sm text-muted-foreground">
-                    <li>Privacy-safe public display uses token only.</li>
-                    <li>AI intake summary is operational, non-diagnostic.</li>
-                    <li>If you chose insurance, staff will review coverage and claims before any submission.</li>
+                    <li>{t("intake.confirm1", lang)}</li>
+                    <li>{t("intake.confirm2", lang)}</li>
+                    <li>{t("intake.confirm3", lang)}</li>
                   </ul>
                 </motion.div>
               )}
@@ -286,14 +305,14 @@ export function Intake() {
             <div className="flex gap-2 pt-4">
               {step > 1 && (
                 <Button type="button" variant="secondary" onClick={prev}>
-                  Back
+                  {t("intake.back", lang)}
                 </Button>
               )}
               {step < STEPS ? (
-                <Button type="button" onClick={next}>Next</Button>
+                <Button type="button" onClick={next}>{t("intake.next", lang)}</Button>
               ) : (
                 <Button onClick={submit} disabled={loading}>
-                  {loading ? "Submitting…" : "Submit Intake"}
+                  {loading ? t("intake.submitting", lang) : t("intake.submit", lang)}
                 </Button>
               )}
             </div>

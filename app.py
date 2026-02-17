@@ -54,6 +54,7 @@ class IntakeRequest(BaseModel):
     symptoms: str = ""
     duration_text: str = "1 day"
     arrival_window: str = "now"
+    lang: str = "en"  # Language preference: "en" or "ar"
 
 
 class StaffLoginRequest(BaseModel):
@@ -588,7 +589,7 @@ def _parse_age_from_dob(dob: str) -> Optional[int]:
         return None
 
 
-def ai_structure_symptoms(symptoms: str, duration: str, age_optional: Optional[int]) -> dict[str, Any]:
+def ai_structure_symptoms(symptoms: str, duration: str, age_optional: Optional[int], lang: str = "en") -> dict[str, Any]:
     text = (symptoms or "").lower().strip()
     symptom_list = [s.strip().capitalize() for s in re.split(r"[,\n]+", symptoms) if s.strip()][:6]
     if not symptom_list and text:
@@ -622,7 +623,8 @@ def ai_structure_symptoms(symptoms: str, duration: str, age_optional: Optional[i
         resources.append("Hydration assessment")
 
     flags_text = ", ".join(flags) if flags else "none detected"
-    if _has_arabic(symptoms):
+    use_arabic = (lang or "").lower() == "ar" or _has_arabic(symptoms)
+    if use_arabic:
         # Arabic summary (non-diagnostic, operational only)
         summary = (
             f"الشكوى الرئيسية: {chief}. "
@@ -907,7 +909,7 @@ def _seed_demo_patients() -> None:
         for first, last, symptoms, duration, window in samples:
             pid = next_pid()
             age = random.randint(18, 72)
-            ai = ai_structure_symptoms(symptoms, duration, age)
+            ai = ai_structure_symptoms(symptoms, duration, age, lang="en")
             patients[pid] = {
             "pid": pid,
             "token": next_token(),
@@ -1665,7 +1667,7 @@ def intake_submit(
     window = arrival_window if arrival_window in {"now", "soon", "later"} else "now"
     pid = next_pid()
     age = _parse_age_from_dob((dob or "").strip())
-    ai = ai_structure_symptoms(symptoms, duration_text, age)
+    ai = ai_structure_symptoms(symptoms, duration_text, age, lang="en")
     with STATE_LOCK:
         patients[pid] = {
         "pid": pid,
@@ -1717,7 +1719,8 @@ def api_intake_submit(body: IntakeRequest):
     window = body.arrival_window if body.arrival_window in {"now", "soon", "later"} else "now"
     pid = next_pid()
     age = _parse_age_from_dob((body.dob or "").strip())
-    ai = ai_structure_symptoms(symptoms, body.duration_text or "1 day", age)
+    lang_pref = (body.lang or "en").lower()
+    ai = ai_structure_symptoms(symptoms, body.duration_text or "1 day", age, lang=lang_pref)
     with STATE_LOCK:
         patients[pid] = {
             "pid": pid,

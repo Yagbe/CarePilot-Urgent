@@ -2,6 +2,7 @@ import { Link, useLocation } from "react-router-dom";
 import { Stethoscope, Shield, LayoutDashboard, BarChart3, LogOut } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { cn } from "@/lib/utils";
+import { LanguageSwitcher } from "@/components/LanguageSwitcher";
 
 const navItems = [
   { to: "/", label: "Portal", icon: LayoutDashboard },
@@ -36,6 +37,7 @@ export function Topbar({ demoMode }: { demoMode?: boolean } = {}) {
               </Button>
             </Link>
           ))}
+          <LanguageSwitcher />
         </nav>
       </div>
     </header>

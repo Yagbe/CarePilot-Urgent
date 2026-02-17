@@ -17,6 +17,7 @@ import { postKioskCheckin, postAiChat, getAiSpeech, getVitalsByToken, getTriage,
 import { motion } from "framer-motion";
 import { Mic, Activity } from "lucide-react";
 import { VitalsForm } from "@/components/vitals/VitalsForm";
+import { getLanguage, t, setLanguage, Language } from "@/lib/i18n";
 
 /** Kiosk steps: scan (QR/code) → vitals → chat, then session done back to scan */
 type KioskStep = "scan" | "vitals" | "chat";
@@ -41,7 +42,8 @@ function beep() {
 type TranscriptBubble = { role: "user" | "assistant"; text: string };
 
 export function KioskCamera() {
-  const [status, setStatus] = useState("Scanning for QR…");
+  const [lang, setLangState] = useState<Language>(getLanguage());
+  const [status, setStatus] = useState(t("kiosk.scanning", getLanguage()));
   const [successCard, setSuccessCard] = useState<{
     token: string;
     message: string;
@@ -53,6 +55,26 @@ export function KioskCamera() {
   const [submitting, setSubmitting] = useState(false);
   const lastProcessedRef = useRef("");
   const cooldownUntilRef = useRef(0);
+
+  useEffect(() => {
+    const storedLang = getLanguage();
+    setLangState(storedLang);
+    setLanguage(storedLang);
+    const handleStorageChange = () => {
+      const newLang = getLanguage();
+      setLangState(newLang);
+      setLanguage(newLang);
+      setStatus(t("kiosk.scanning", newLang));
+    };
+    window.addEventListener("storage", handleStorageChange);
+    return () => window.removeEventListener("storage", handleStorageChange);
+  }, []);
+
+  useEffect(() => {
+    if (recognitionRef.current) {
+      recognitionRef.current.lang = lang === "ar" ? "ar-SA" : "en-US";
+    }
+  }, [lang]);
 
   const [voiceState, setVoiceState] = useState<"idle" | "listening" | "processing" | "speaking">("idle");
   const [transcript, setTranscript] = useState<TranscriptBubble[]>([]);
@@ -149,8 +171,9 @@ export function KioskCamera() {
 
   const submitCode = useCallback(async (code: string, fromCamera: boolean) => {
     if (!code.trim()) return;
+    const currentLang = getLanguage();
     setSubmitting(true);
-    setStatus(fromCamera ? "QR detected, checking in…" : "Checking in…");
+    setStatus(fromCamera ? t("kiosk.qrDetected", currentLang) : t("kiosk.checkingIn", currentLang));
     try {
       const res = await postKioskCheckin(code.trim());
       if (res.ok && res.checked_in) {
@@ -170,19 +193,19 @@ export function KioskCamera() {
         if (fromCamera) {
           setScanningEnabled(false);
           cooldownUntilRef.current = Date.now() + 3000;
-          setStatus("Checked in. Scan paused for 3 seconds…");
+          setStatus(t("kiosk.scanPaused", currentLang));
           setTimeout(() => {
             setScanningEnabled(true);
-            setStatus("Scanning for QR…");
+            setStatus(t("kiosk.scanning", currentLang));
           }, 3000);
         } else {
-          setStatus("Checked in.");
+          setStatus(t("kiosk.checkedIn", currentLang));
         }
       } else {
-        setStatus(res.message || "Code not found.");
+        setStatus(res.message || t("kiosk.codeNotFound", currentLang));
       }
     } catch {
-      setStatus("Check-in error. Use manual fallback.");
+      setStatus(t("kiosk.checkInError", currentLang));
     } finally {
       setSubmitting(false);
     }
@@ -201,7 +224,7 @@ export function KioskCamera() {
           if (!cancelled) await submitCode(v, true);
         }
       } catch {
-        if (!cancelled) setStatus("Camera unavailable. Use manual fallback.");
+        if (!cancelled) setStatus(t("kiosk.cameraUnavailable", getLanguage()));
       }
     };
     poll();
@@ -229,7 +252,7 @@ export function KioskCamera() {
     if (!Rec) return;
     const rec = new Rec() as SpeechRecognitionLike;
     recognitionRef.current = rec;
-    rec.lang = "en-US";
+    rec.lang = lang === "ar" ? "ar-SA" : "en-US";
     rec.interimResults = false;
     rec.maxAlternatives = 1;
     rec.onstart = () => {
@@ -404,16 +427,17 @@ export function KioskCamera() {
                   submitCode(manualCode, false);
                 }}
               >
-                <Label htmlFor="manual-code" className="sr-only">Token or code</Label>
+                <Label htmlFor="manual-code" className="sr-only">{t("kiosk.tokenOrCode", lang)}</Label>
                 <Input
                   id="manual-code"
                   value={manualCode}
                   onChange={(e) => setManualCode(e.target.value)}
-                  placeholder="UC-1234 or code"
+                  placeholder={t("kiosk.tokenOrCodePlaceholder", lang)}
                   className="max-w-[200px] font-mono"
+                  dir={lang === "ar" ? "ltr" : "ltr"}
                 />
                 <Button type="submit" disabled={submitting} size="sm">
-                  {submitting ? "…" : "Check In"}
+                  {submitting ? "…" : t("kiosk.checkIn", lang)}
                 </Button>
               </form>
               <span className="text-sm text-muted-foreground">{status}</span>
@@ -426,7 +450,7 @@ export function KioskCamera() {
                   className="h-auto w-full rounded-lg border-0 border-border object-contain max-h-[50vh] sm:max-h-[60vh]"
                 />
               </CardContent>
-              <p className="px-4 pb-2 text-center text-muted-foreground text-xs">Scan your QR code or enter your token above.</p>
+              <p className="px-4 pb-2 text-center text-muted-foreground text-xs">{t("kiosk.scanQR", lang)}</p>
             </Card>
           </>
         )}
@@ -439,12 +463,12 @@ export function KioskCamera() {
             className="w-full max-w-2xl space-y-4 text-center"
           >
             <div className="rounded-lg border-l-4 border-green-600 bg-green-50 p-4 dark:bg-green-950">
-              <p className="text-lg font-bold text-green-900 dark:text-green-100">✓ You're checked in</p>
+              <p className="text-lg font-bold text-green-900 dark:text-green-100">{t("kiosk.checkedInTitle", lang)}</p>
               {successCard.display_name && (
-                <p className="text-green-800 dark:text-green-200">Welcome, <strong>{successCard.display_name}</strong>.</p>
+                <p className="text-green-800 dark:text-green-200">{t("kiosk.welcome", lang)} <strong>{successCard.display_name}</strong>.</p>
               )}
               <p className="font-mono text-xl font-bold text-green-800 dark:text-green-200">{successCard.token}</p>
-              <p className="text-green-800 dark:text-green-200 text-sm">Estimated wait: <strong>{successCard.estimated_wait_min} min</strong>. Next: collect your vitals below.</p>
+              <p className="text-green-800 dark:text-green-200 text-sm">{t("kiosk.waitTime", lang)} <strong>{successCard.estimated_wait_min} {t("kiosk.minutes", lang)}</strong>. {t("kiosk.nextVitals", lang)}</p>
             </div>
             {triageResult && (
               <div
@@ -463,7 +487,7 @@ export function KioskCamera() {
                       ? "text-orange-900 dark:text-orange-100"
                       : "text-yellow-900 dark:text-yellow-100"
                 }`}>
-                  Priority: {triageResult.priority === "high" ? "High" : triageResult.priority === "medium" ? "Medium" : "Low"}
+                  {t("kiosk.priority", lang)} {triageResult.priority === "high" ? t("kiosk.priorityHigh", lang) : triageResult.priority === "medium" ? t("kiosk.priorityMedium", lang) : t("kiosk.priorityLow", lang)}
                 </p>
                 <p className={`text-sm mt-1 ${
                   triageResult.priority === "high"
@@ -480,11 +504,11 @@ export function KioskCamera() {
               <CardHeader>
                 <CardTitle className="flex items-center justify-center gap-2 text-base">
                   <Activity className="h-5 w-5" />
-                  Vitals
+                  {t("kiosk.vitalsTitle", lang)}
                 </CardTitle>
                 <CardContent className="pt-0">
                   <p className="text-muted-foreground text-sm py-2">
-                    Use the provided sensors to record your blood pressure, pulse, and body temperature, then enter the readings here (or have staff enter them).
+                    {t("kiosk.vitalsDesc", lang)}
                   </p>
                   <div className="max-w-md mx-auto mt-2">
                     <VitalsForm token={successCard.token} onSuccess={handleVitalsSubmitted} />
@@ -493,19 +517,19 @@ export function KioskCamera() {
                     <div className="grid grid-cols-2 sm:grid-cols-4 gap-3 py-4 mt-4 border-t border-border">
                       {(autoVitals.bp_sys != null || autoVitals.bp_dia != null) && (
                         <div className="rounded-lg bg-muted/50 p-3">
-                          <p className="text-muted-foreground text-xs">Blood pressure</p>
+                          <p className="text-muted-foreground text-xs">{t("kiosk.bloodPressure", lang)}</p>
                           <p className="text-xl font-bold">{autoVitals.bp_sys ?? "—"} / {autoVitals.bp_dia ?? "—"}</p>
                         </div>
                       )}
                       {autoVitals.hr != null && (
                         <div className="rounded-lg bg-muted/50 p-3">
-                          <p className="text-muted-foreground text-xs">Pulse</p>
+                          <p className="text-muted-foreground text-xs">{t("kiosk.pulse", lang)}</p>
                           <p className="text-xl font-bold">{autoVitals.hr} bpm</p>
                         </div>
                       )}
                       {autoVitals.temp_c != null && (
                         <div className="rounded-lg bg-muted/50 p-3">
-                          <p className="text-muted-foreground text-xs">Body temp</p>
+                          <p className="text-muted-foreground text-xs">{t("kiosk.bodyTemp", lang)}</p>
                           <p className="text-xl font-bold">{autoVitals.temp_c} °C</p>
                         </div>
                       )}
@@ -521,7 +545,7 @@ export function KioskCamera() {
               </CardHeader>
             </Card>
             <Button type="button" size="lg" className="w-full max-w-xs" onClick={() => setKioskStep("chat")}>
-              Continue to chat
+              {t("kiosk.continueChat", lang)}
             </Button>
           </motion.div>
         )}
@@ -537,19 +561,19 @@ export function KioskCamera() {
               <span className="text-sm text-muted-foreground">
                 <span className="font-mono font-bold text-foreground">{successCard.token}</span>
                 {" · "}
-                Chat with {AI_NAME}
+                {t("kiosk.chatTitle", lang)} {AI_NAME}
               </span>
             </div>
             <Card>
               <CardHeader>
-                <CardTitle className="text-base">Chat with {AI_NAME} — ask wait time, wayfinding, or workflow</CardTitle>
+                <CardTitle className="text-base">{t("kiosk.chatTitle", lang)} {AI_NAME} — {t("kiosk.chatSubtitle", lang)}</CardTitle>
                 <CardContent className="pt-0 space-y-3">
                   <p className="text-muted-foreground text-xs">
-                    Type or use the mic. Non-diagnostic only. Emergency symptoms? Alert staff immediately.
+                    {t("kiosk.chatHint", lang)}
                   </p>
                   <div className="rounded-lg border border-border bg-muted/20 min-h-[140px] max-h-[220px] overflow-y-auto p-3 space-y-2">
                     {transcript.length === 0 && (
-                      <p className="text-muted-foreground text-sm">Ask anything—e.g. &quot;Where is the waiting room?&quot; or &quot;How long is the wait?&quot;</p>
+                      <p className="text-muted-foreground text-sm">{t("kiosk.chatPlaceholder", lang)}</p>
                     )}
                     {transcript.map((b, i) => (
                       <div
@@ -560,7 +584,7 @@ export function KioskCamera() {
                             : "bg-muted ml-4 mr-0 text-right"
                         }`}
                       >
-                        <span className="font-medium text-xs opacity-80">{b.role === "assistant" ? AI_NAME : "You"}</span>
+                        <span className="font-medium text-xs opacity-80">{b.role === "assistant" ? AI_NAME : t("kiosk.you", lang)}</span>
                         <p className="mt-0.5">{b.text}</p>
                       </div>
                     ))}
@@ -574,36 +598,37 @@ export function KioskCamera() {
                   </div>
                   <div className="flex flex-wrap items-center gap-2">
                     <Input
-                      placeholder="Type your question…"
+                      placeholder={t("kiosk.typeQuestion", lang)}
                       value={chatInput}
                       onChange={(e) => setChatInput(e.target.value)}
                       onKeyDown={(e) => e.key === "Enter" && sendChatMessage()}
                       disabled={chatSending}
                       className="flex-1 min-w-[160px]"
+                      dir={lang === "ar" ? "rtl" : "ltr"}
                     />
                     <Button type="button" onClick={sendChatMessage} disabled={chatSending || !chatInput.trim()}>
-                      {chatSending ? "…" : "Send"}
+                      {chatSending ? "…" : t("kiosk.send", lang)}
                     </Button>
-                    <Button type="button" variant="outline" size="icon" onClick={startListening} disabled={voiceState === "listening" || chatSending} title="Voice">
+                    <Button type="button" variant="outline" size="icon" onClick={startListening} disabled={voiceState === "listening" || chatSending} title={t("kiosk.voice", lang)}>
                       <Mic className="h-4 w-4" />
                     </Button>
                     <span className="rounded-full bg-muted px-2 py-1 text-xs">
-                      {voiceState === "idle" && "Idle"}
-                      {voiceState === "listening" && "Listening…"}
-                      {voiceState === "processing" && "Processing…"}
-                      {voiceState === "speaking" && "Speaking"}
+                      {voiceState === "idle" && t("kiosk.idle", lang)}
+                      {voiceState === "listening" && t("kiosk.listening", lang)}
+                      {voiceState === "processing" && t("kiosk.processing", lang)}
+                      {voiceState === "speaking" && t("kiosk.speaking", lang)}
                     </span>
                   </div>
                   {redFlagAlert && (
                     <div className="rounded-lg border-l-4 border-destructive bg-destructive/10 p-3 text-destructive font-medium text-sm">
-                      Red-flag phrase detected. Please call staff now.
+                      {t("kiosk.redFlag", lang)}
                     </div>
                   )}
                 </CardContent>
               </CardHeader>
             </Card>
             <Button type="button" variant="secondary" size="lg" className="w-full max-w-xs" onClick={handleSessionDone}>
-              Session done
+              {t("kiosk.sessionDone", lang)}
             </Button>
           </motion.div>
         )}

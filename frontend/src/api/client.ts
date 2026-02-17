@@ -11,6 +11,7 @@ export async function postIntake(body: {
   symptoms: string;
   duration_text?: string;
   arrival_window?: string;
+  lang?: string;
 }): Promise<{ pid: string; encounter_id?: string; token: string; redirect: string }> {
   const r = await fetch(`${API}/api/intake`, {
     method: "POST",
