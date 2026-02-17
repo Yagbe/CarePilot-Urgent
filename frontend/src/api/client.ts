@@ -11,7 +11,7 @@ export async function postIntake(body: {
   symptoms: string;
   duration_text?: string;
   arrival_window?: string;
-}): Promise<{ pid: string; token: string; redirect: string }> {
+}): Promise<{ pid: string; encounter_id?: string; token: string; redirect: string }> {
   const r = await fetch(`${API}/api/intake`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
@@ -21,6 +21,42 @@ export async function postIntake(body: {
   if (!r.ok) {
     const t = await r.text();
     throw new Error(t || "Intake failed");
+  }
+  return r.json();
+}
+
+export async function postInsuranceEligibilityCheck(body: {
+  encounter_id?: string;
+  pid?: string;
+  token?: string;
+  national_id?: string;
+  iqama?: string;
+  passport?: string;
+  insurer_name?: string;
+  policy_number?: string;
+  member_id?: string;
+  consent: boolean;
+}): Promise<{
+  ok: boolean;
+  encounter_id: string;
+  insurance_profile_id: number;
+  eligibility_id: number;
+  normalized: {
+    eligible: string;
+    plan_type?: string | null;
+    copay_estimate?: number | null;
+    authorization_required: string;
+  };
+}> {
+  const r = await fetch(`${API}/api/insurance/eligibility-check`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(body),
+    credentials: "same-origin",
+  });
+  if (!r.ok) {
+    const t = await r.text();
+    throw new Error(t || "Eligibility check failed");
   }
   return r.json();
 }
@@ -250,6 +286,50 @@ export async function getAnalytics(providers?: number): Promise<AnalyticsData> {
   const q = providers != null ? `?providers=${providers}` : "";
   const r = await fetch(`${API}/api/analytics${q}`, { credentials: "same-origin" });
   if (!r.ok) throw new ApiError("Failed to load analytics", r.status);
+  return r.json();
+}
+
+export async function postClaimBundle(encounterId: string): Promise<{
+  ok: boolean;
+  encounter_id: string;
+  claim_bundle_id: number;
+  status: string;
+  bundle: unknown;
+}> {
+  const r = await fetch(`${API}/api/claims/bundle/${encodeURIComponent(encounterId)}`, {
+    method: "POST",
+    credentials: "same-origin",
+  });
+  if (!r.ok) throw new ApiError("Failed to build claim bundle", r.status);
+  return r.json();
+}
+
+export async function postClaimSubmit(encounterId: string): Promise<{
+  ok: boolean;
+  encounter_id: string;
+  claim_id: string;
+  status: string;
+  adapter: string;
+}> {
+  const r = await fetch(`${API}/api/claims/submit/${encodeURIComponent(encounterId)}`, {
+    method: "POST",
+    credentials: "same-origin",
+  });
+  if (!r.ok) throw new ApiError("Failed to submit claim", r.status);
+  return r.json();
+}
+
+export async function getClaimStatus(encounterId: string): Promise<{
+  ok: boolean;
+  encounter_id: string;
+  status: string;
+  claim_id?: string;
+  adapter?: string;
+}> {
+  const r = await fetch(`${API}/api/claims/status/${encodeURIComponent(encounterId)}`, {
+    credentials: "same-origin",
+  });
+  if (!r.ok) throw new ApiError("Failed to load claim status", r.status);
   return r.json();
 }
 

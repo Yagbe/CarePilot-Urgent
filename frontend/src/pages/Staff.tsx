@@ -13,6 +13,9 @@ import {
   getDemoMode,
   ApiError,
   type StaffQueueItem,
+  postClaimBundle,
+  postClaimSubmit,
+  getClaimStatus,
 } from "@/api/client";
 import { UserCheck, CheckCircle, Copy, Activity, Radio } from "lucide-react";
 import { motion } from "framer-motion";
@@ -68,6 +71,10 @@ export function Staff() {
   } | null>(null);
   const [updating, setUpdating] = useState<string | null>(null);
   const [liveVitalsPatient, setLiveVitalsPatient] = useState<StaffQueueItem | null>(null);
+  const [billingPatient, setBillingPatient] = useState<StaffQueueItem | null>(null);
+  const [billingLoading, setBillingLoading] = useState(false);
+  const [billingStatus, setBillingStatus] = useState<{ status: string; claimId?: string } | null>(null);
+  const [billingPatient, setBillingPatient] = useState<StaffQueueItem | null>(null);
 
   const load = () => {
     getStaffQueue()
@@ -251,6 +258,9 @@ export function Staff() {
                   <Button size="sm" variant="outline" onClick={() => setLiveVitalsPatient(item)}>
                     <Radio className="mr-1 h-4 w-4" /> Live Vitals
                   </Button>
+                  <Button size="sm" variant="outline" onClick={() => setBillingPatient(item)}>
+                    Billing
+                  </Button>
                 </div>
               </div>
               <hr className="my-3 border-border" />
@@ -286,6 +296,88 @@ export function Staff() {
             </motion.div>
           ))}
         </div>
+
+        {billingPatient && (
+          <Card>
+            <CardHeader>
+              <CardTitle className="text-sm">
+                Billing preview for token {billingPatient.token} ({billingPatient.full_name ?? "—"})
+              </CardTitle>
+            </CardHeader>
+            <CardContent className="space-y-2 text-xs text-muted-foreground">
+              <p className="font-semibold text-foreground">Billing (draft – staff review required)</p>
+              <div className="flex flex-wrap gap-2">
+                <Button
+                  size="sm"
+                  variant="outline"
+                  disabled={billingLoading}
+                  onClick={async () => {
+                    if (!billingPatient) return;
+                    setBillingLoading(true);
+                    try {
+                      const res = await postClaimBundle(billingPatient.id);
+                      setBillingStatus({ status: res.status });
+                    } catch (e) {
+                      alert(e instanceof Error ? e.message : "Failed to build bundle");
+                    } finally {
+                      setBillingLoading(false);
+                    }
+                  }}
+                >
+                  Build bundle (draft)
+                </Button>
+                <Button
+                  size="sm"
+                  variant="secondary"
+                  disabled={billingLoading}
+                  onClick={async () => {
+                    if (!billingPatient) return;
+                    setBillingLoading(true);
+                    try {
+                      const res = await postClaimSubmit(billingPatient.id);
+                      setBillingStatus({ status: res.status, claimId: res.claim_id });
+                    } catch (e) {
+                      alert(e instanceof Error ? e.message : "Failed to submit claim");
+                    } finally {
+                      setBillingLoading(false);
+                    }
+                  }}
+                >
+                  Submit claim (mock)
+                </Button>
+                <Button
+                  size="sm"
+                  variant="ghost"
+                  disabled={billingLoading}
+                  onClick={async () => {
+                    if (!billingPatient) return;
+                    setBillingLoading(true);
+                    try {
+                      const res = await getClaimStatus(billingPatient.id);
+                      setBillingStatus({ status: res.status, claimId: res.claim_id });
+                    } catch (e) {
+                      alert(e instanceof Error ? e.message : "Failed to load claim status");
+                    } finally {
+                      setBillingLoading(false);
+                    }
+                  }}
+                >
+                  Refresh status
+                </Button>
+              </div>
+              {billingStatus && (
+                <p>
+                  Status: <span className="font-semibold text-foreground">{billingStatus.status}</span>
+                  {billingStatus.claimId ? ` • Claim ID: ${billingStatus.claimId}` : null}
+                </p>
+              )}
+              <p className="mt-1">
+                Coding suggestions in each bundle are <strong>draft only</strong> and require staff billing review
+                before any real payer submission.
+              </p>
+            </CardContent>
+          </Card>
+        )}
       </main>
     </>
   );

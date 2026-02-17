@@ -5,10 +5,10 @@ import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
-import { postIntake } from "@/api/client";
+import { postIntake, postInsuranceEligibilityCheck } from "@/api/client";
 import { motion, AnimatePresence } from "framer-motion";
 
-const STEPS = 3;
+const STEPS = 4;
 
 export function Intake() {
   const [step, setStep] = useState(1);
@@ -21,6 +21,14 @@ export function Intake() {
     symptoms: "",
     duration_text: "1 day",
     arrival_window: "now",
+  });
+  const [useInsurance, setUseInsurance] = useState(false);
+  const [insurance, setInsurance] = useState({
+    national_id: "",
+    insurer_name: "",
+    policy_number: "",
+    member_id: "",
+    consent: false,
   });
   const navigate = useNavigate();
 
@@ -36,6 +44,23 @@ export function Intake() {
     setLoading(true);
     try {
       const res = await postIntake(form);
+      // Optional: run insurance eligibility if enabled and consented
+      if (useInsurance && insurance.consent) {
+        try {
+          await postInsuranceEligibilityCheck({
+            encounter_id: res.encounter_id ?? res.pid,
+            pid: res.pid,
+            national_id: insurance.national_id || undefined,
+            insurer_name: insurance.insurer_name || undefined,
+            policy_number: insurance.policy_number || undefined,
+            member_id: insurance.member_id || undefined,
+            consent: true,
+          });
+        } catch (e) {
+          // Non-fatal for patient; staff can still handle self-pay.
+          console.warn("Eligibility check failed", e);
+        }
+      }
       navigate(res.redirect);
     } catch (e) {
       alert(e instanceof Error ? e.message : "Submission failed");
@@ -58,7 +83,7 @@ export function Intake() {
         <Card>
           <CardHeader>
             <div className="flex gap-2">
-              {[1, 2, 3].map((s) => (
+              {[1, 2, 3, 4].map((s) => (
                 <span
                   key={s}
                   className={`rounded-full px-3 py-1 text-sm font-medium ${
@@ -170,11 +195,90 @@ export function Intake() {
                   initial={{ opacity: 0, x: 8 }}
                   animate={{ opacity: 1, x: 0 }}
                   exit={{ opacity: 0, x: -8 }}
+                  className="space-y-4"
+                >
+                  <div className="flex items-center justify-between">
+                    <div>
+                      <Label className="font-semibold">Insurance (optional)</Label>
+                      <p className="text-xs text-muted-foreground">
+                        You can skip this step and pay cash at the clinic, or enter insurance details for eligibility checks.
+                      </p>
+                    </div>
+                    <button
+                      type="button"
+                      className={`inline-flex items-center rounded-full border px-3 py-1 text-xs font-medium ${
+                        useInsurance ? "bg-primary text-primary-foreground border-primary" : "bg-muted text-muted-foreground"
+                      }`}
+                      onClick={() => setUseInsurance((v) => !v)}
+                    >
+                      {useInsurance ? "Using insurance" : "Self-pay"}
+                    </button>
+                  </div>
+                  {useInsurance && (
+                    <>
+                      <div>
+                        <Label htmlFor="national_id">National ID / Iqama / Passport</Label>
+                        <Input
+                          id="national_id"
+                          value={insurance.national_id}
+                          onChange={(e) => setInsurance((i) => ({ ...i, national_id: e.target.value }))}
+                          placeholder="Optional identifier"
+                        />
+                      </div>
+                      <div>
+                        <Label htmlFor="insurer_name">Insurer name</Label>
+                        <Input
+                          id="insurer_name"
+                          value={insurance.insurer_name}
+                          onChange={(e) => setInsurance((i) => ({ ...i, insurer_name: e.target.value }))}
+                          placeholder="e.g. Bupa, Tawuniya"
+                        />
+                      </div>
+                      <div className="grid gap-3 sm:grid-cols-2">
+                        <div>
+                          <Label htmlFor="policy_number">Policy number</Label>
+                          <Input
+                            id="policy_number"
+                            value={insurance.policy_number}
+                            onChange={(e) => setInsurance((i) => ({ ...i, policy_number: e.target.value }))}
+                          />
+                        </div>
+                        <div>
+                          <Label htmlFor="member_id">Member ID</Label>
+                          <Input
+                            id="member_id"
+                            value={insurance.member_id}
+                            onChange={(e) => setInsurance((i) => ({ ...i, member_id: e.target.value }))}
+                          />
+                        </div>
+                      </div>
+                      <label className="flex items-start gap-2 text-xs text-muted-foreground">
+                        <input
+                          type="checkbox"
+                          className="mt-0.5"
+                          checked={insurance.consent}
+                          onChange={(e) => setInsurance((i) => ({ ...i, consent: e.target.checked }))}
+                        />
+                        <span>
+                          I consent to sharing my information for insurance eligibility and claims processing. This does not authorize diagnosis or treatment.
+                        </span>
+                      </label>
+                    </>
+                  )}
+                </motion.div>
+              )}
+              {step === 4 && (
+                <motion.div
+                  key="4"
+                  initial={{ opacity: 0, x: 8 }}
+                  animate={{ opacity: 1, x: 0 }}
+                  exit={{ opacity: 0, x: -8 }}
                 >
                   <p className="text-muted-foreground text-sm">Confirm and submit to generate your token and QR code.</p>
                   <ul className="mt-2 list-inside list-disc text-sm text-muted-foreground">
                     <li>Privacy-safe public display uses token only.</li>
                     <li>AI intake summary is operational, non-diagnostic.</li>
+                    <li>If you chose insurance, staff will review coverage and claims before any submission.</li>
                   </ul>
                 </motion.div>
               )}

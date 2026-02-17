@@ -39,6 +39,8 @@ from starlette.middleware.httpsredirect import HTTPSRedirectMiddleware
 from starlette.middleware.trustedhost import TrustedHostMiddleware
 from dotenv import load_dotenv
 
+from integrations.nphies_adapter import InsuranceAdapter, get_insurance_adapter
+
 load_dotenv()
 
 # -----------------------------------------------------------------------------
@@ -81,6 +83,20 @@ class VitalsSubmitRequest(BaseModel):
     ts: str = ""
 
 
+class InsuranceEligibilityRequest(BaseModel):
+    """Request body for insurance eligibility checks (integration-ready, non-diagnostic)."""
+    encounter_id: str = ""
+    pid: str = ""
+    token: str = ""
+    national_id: str = ""
+    iqama: str = ""
+    passport: str = ""
+    insurer_name: str = ""
+    policy_number: str = ""
+    member_id: str = ""
+    consent: bool = False
+
+
 # -----------------------------------------------------------------------------
 # App config and storage (env from .env; never commit .env to git)
 # -----------------------------------------------------------------------------
@@ -116,6 +132,7 @@ OPENAI_TTS_MODEL = os.getenv("OPENAI_TTS_MODEL", "tts-1-hd").strip() or "tts-1-h
 OPENAI_TTS_VOICE = os.getenv("OPENAI_TTS_VOICE", "nova").strip().lower() or "nova"
 # Optional: when set, kiosk will POST check-in token here (sensor bridge / token receiver). Leave unset to avoid localhost:9999 requests.
 SENSOR_BRIDGE_URL = (os.getenv("SENSOR_BRIDGE_URL", "").strip() or "").rstrip("/")
+INSURANCE_ADAPTER_NAME = os.getenv("INSURANCE_ADAPTER", "mock").strip().lower()
 patients: dict[str, dict[str, Any]] = {}
 queue_order: list[str] = []
 provider_count = 1
@@ -150,6 +167,85 @@ def _init_db() -> None:
               status TEXT,
               created_at TEXT,
               checked_in_at TEXT
+            )
+            """
+        )
+        DB_CONN.execute(
+            """
+            CREATE TABLE IF NOT EXISTS encounters (
+              encounter_id TEXT PRIMARY KEY,
+              pid TEXT,
+              station_id TEXT,
+              created_at TEXT,
+              checked_in_at TEXT,
+              provider_ready_at TEXT,
+              vitals_snapshot_id INTEGER,
+              insurance_profile_id INTEGER,
+              eligibility_result_id INTEGER,
+              claim_bundle_id INTEGER,
+              claim_status TEXT
+            )
+            """
+        )
+        DB_CONN.execute(
+            """
+            CREATE TABLE IF NOT EXISTS insurance_profiles (
+              id INTEGER PRIMARY KEY AUTOINCREMENT,
+              encounter_id TEXT,
+              pid TEXT,
+              national_id TEXT,
+              iqama TEXT,
+              passport TEXT,
+              insurer_name TEXT,
+              policy_number TEXT,
+              member_id TEXT,
+              dob TEXT,
+              phone TEXT,
+              consent INTEGER DEFAULT 0,
+              raw_payload TEXT,
+              created_at TEXT
+            )
+            """
+        )
+        DB_CONN.execute(
+            """
+            CREATE TABLE IF NOT EXISTS eligibility_checks (
+              id INTEGER PRIMARY KEY AUTOINCREMENT,
+              encounter_id TEXT,
+              insurance_profile_id INTEGER,
+              status TEXT,
+              eligible TEXT,
+              plan_type TEXT,
+              copay_estimate REAL,
+              authorization_required TEXT,
+              raw_request TEXT,
+              raw_response TEXT,
+              created_at TEXT
+            )
+            """
+        )
+        DB_CONN.execute(
+            """
+            CREATE TABLE IF NOT EXISTS claim_bundles (
+              id INTEGER PRIMARY KEY AUTOINCREMENT,
+              encounter_id TEXT,
+              bundle_json TEXT,
+              created_at TEXT
+            )
+            """
+        )
+        DB_CONN.execute(
+            """
+            CREATE TABLE IF NOT EXISTS claim_submissions (
+              id INTEGER PRIMARY KEY AUTOINCREMENT,
+              encounter_id TEXT,
+              claim_bundle_id INTEGER,
+              adapter_name TEXT,
+              external_claim_id TEXT,
+              status TEXT,
+              raw_response TEXT,
+              created_at TEXT,
+              updated_at TEXT
             )
             """
         )
@@ -872,6 +968,189 @@ def _reset_state() -> None:
         DB_CONN.commit()
 
 
+def _ensure_encounter_for_pid(pid: str, station_id: str = "kiosk") -> str:
+    """
+    Ensure there is an encounter row for this patient.
+    Returns encounter_id (created if missing).
+    """
+    if not pid:
+        raise HTTPException(400, "pid is required for encounter.")
+    with STATE_LOCK:
+        row = DB_CONN.execute(
+            "SELECT encounter_id FROM encounters WHERE pid=? ORDER BY created_at LIMIT 1",
+            (pid,),
+        ).fetchone()
+        if row:
+            return str(row["encounter_id"])
+        # For now we use pid as encounter_id so frontend staff views can
+        # address encounters directly by patient id without extra mapping.
+        encounter_id = pid
+        now = datetime.utcnow().isoformat()
+        DB_CONN.execute(
+            """
+            INSERT INTO encounters(encounter_id, pid, station_id, created_at, checked_in_at, claim_status)
+            VALUES(?,?,?,?,?,?)
+            """,
+            (encounter_id, pid, station_id, now, None, "draft"),
+        )
+        DB_CONN.commit()
+    _audit("encounter_created", {"encounter_id": encounter_id, "pid": pid, "station_id": station_id})
+    return encounter_id
+
+
+def _latest_eligibility_for_encounter(encounter_id: str) -> Optional[dict[str, Any]]:
+    if not encounter_id:
+        return None
+    with STATE_LOCK:
+        row = DB_CONN.execute(
+            "SELECT * FROM eligibility_checks WHERE encounter_id=? ORDER BY id DESC LIMIT 1",
+            (encounter_id,),
+        ).fetchone()
+    return dict(row) if row else None
+
+
+def _latest_claim_submission_for_encounter(encounter_id: str) -> Optional[dict[str, Any]]:
+    if not encounter_id:
+        return None
+    with STATE_LOCK:
+        row = DB_CONN.execute(
+            "SELECT * FROM claim_submissions WHERE encounter_id=? ORDER BY id DESC LIMIT 1",
+            (encounter_id,),
+        ).fetchone()
+    return dict(row) if row else None
+
+
+def _build_claim_bundle(encounter_id: str) -> dict[str, Any]:
+    """
+    Build a non-diagnostic, operations-focused encounter bundle for billing/claims.
+    Uses in-memory patient state plus DB snapshots; safe to export via adapter.
+    """
+    if not encounter_id:
+        raise HTTPException(400, "encounter_id is required.")
+    with STATE_LOCK:
+        enc_row = DB_CONN.execute(
+            "SELECT * FROM encounters WHERE encounter_id=?",
+            (encounter_id,),
+        ).fetchone()
+        if not enc_row:
+            raise HTTPException(404, "Encounter not found.")
+        enc = dict(enc_row)
+        pid = str(enc.get("pid") or "")
+        patient = patients.get(pid, {}).copy()
+        insurance_profile = None
+        if enc.get("insurance_profile_id"):
+            ip_row = DB_CONN.execute(
+                "SELECT * FROM insurance_profiles WHERE id=?",
+                (enc["insurance_profile_id"],),
+            ).fetchone()
+            insurance_profile = dict(ip_row) if ip_row else None
+        eligibility = None
+        if enc.get("eligibility_result_id"):
+            el_row = DB_CONN.execute(
+                "SELECT * FROM eligibility_checks WHERE id=?",
+                (enc["eligibility_result_id"],),
+            ).fetchone()
+            eligibility = dict(el_row) if el_row else None
+    vitals = _latest_vitals_for_pid(pid) if pid else None
+    ai = (patient.get("ai_result") or {}) if patient else {}
+    lane = _lane_from_complexity(ai.get("operational_complexity", ""))
+    tags = ["Nurse triage"]
+    cluster = str(ai.get("cluster", ""))
+    if "Respiratory" in cluster:
+        tags.extend(["mask station", "rapid test kit"])
+    if "GI" in cluster:
+        tags.append("hydration supplies")
+    if ai.get("red_flag_keywords_detected"):
+        tags.append("priority clinician review")
+
+    # Lightweight audit trail for this bundle (non-PHI payloads only)
+    audit_events: list[dict[str, Any]] = []
+    with STATE_LOCK:
+        rows = DB_CONN.execute(
+            "SELECT id, event_type, ts FROM audit_log ORDER BY id DESC LIMIT 50"
+        ).fetchall()
+    for r in rows:
+        audit_events.append(
+            {
+                "id": r["id"],
+                "event_type": r["event_type"],
+                "ts": r["ts"],
+            }
+        )
+
+    demographics = {
+        "pid": pid,
+        "token": patient.get("token"),
+        "first_name": patient.get("first_name"),
+        "last_name": patient.get("last_name"),
+        "dob": patient.get("dob"),
+        "phone": patient.get("phone"),
+    }
+    symptoms = {
+        "raw_text": patient.get("symptoms", ""),
+        "chief_complaint": ai.get("chief_complaint", ""),
+        "cluster": ai.get("cluster", ""),
+        "operational_complexity": ai.get("operational_complexity", ""),
+        "ai_summary_text": ai.get("ai_summary_text", ""),
+        "duration_text": patient.get("duration_text", ""),
+    }
+
+    coding_suggestions = {
+        "suggested_service_category": "General visit",
+        "suggested_resource_codes": ["VITALS_PANEL", "TRIAGE_NURSE"],
+        "required_approvals": ["billing review"],
+        "draft": True,
+        "staff_review_required": True,
+        "disclaimer": (
+            "Non-diagnostic draft coding suggestion for operational use only. "
+            "Staff billing review is required before any submission."
+        ),
+    }
+    if "Respiratory" in cluster:
+        coding_suggestions["suggested_service_category"] = "Respiratory visit"
+        coding_suggestions["suggested_resource_codes"].append("RESP_RAPID_TEST")
+    elif "GI" in cluster:
+        coding_suggestions["suggested_service_category"] = "GI visit"
+        coding_suggestions["suggested_resource_codes"].append("GI_HYDRATION_SUPPORT")
+
+    bundle = {
+        "encounter_id": encounter_id,
+        "patient": demographics,
+        "encounter": {
+            "pid": pid,
+            "station_id": enc.get("station_id"),
+            "created_at": enc.get("created_at"),
+            "checked_in_at": enc.get("checked_in_at"),
+            "provider_ready_at": enc.get("provider_ready_at"),
+            "claim_status": enc.get("claim_status") or "draft",
+        },
+        "symptoms_and_vitals": {
+            "symptoms": symptoms,
+            "vitals_latest": vitals,
+        },
+        "triage": {
+            "lane": lane,
+            "resource_tags": tags,
+            "arrival_window": patient.get("arrival_window"),
+        },
+        "resources_used": ai.get("suggested_resources", []),
+        "billing": {
+            "insurance_profile": insurance_profile,
+            "eligibility": eligibility,
+        },
+        "audit_log_tail": audit_events,
+        "documents": {
+            "qr_checkin_record": bool(pid and patient.get("token")),
+            "vitals_record": bool(vitals),
+            "qr_url": f"/qr/{pid}" if pid else None,
+            "vitals_api_url": f"/api/vitals/{pid}" if pid else None,
+        },
+        "coding_suggestions": coding_suggestions,
+        "non_diagnostic": True,
+    }
+    return bundle
+
+
 def _wait_for_pid(pid: str) -> int:
     active = _queue_active()
     waits = _simulate_wait_map(active, provider_count)
@@ -929,9 +1208,15 @@ def _kiosk_checkin_result(code: str) -> dict[str, Any]:
         p["emergency_type"] = p.get("emergency_type", "")
         if pid not in queue_order:
             queue_order.append(pid)
+        # Ensure encounter row exists and record check-in timestamp for operational analytics/billing.
+        encounter_id = _ensure_encounter_for_pid(pid, station_id="kiosk")
         DB_CONN.execute(
             "UPDATE patients SET status=?, checked_in_at=? WHERE pid=?",
             (p["status"], p["checked_in_at"], pid),
+        )
+        DB_CONN.execute(
+            "UPDATE encounters SET checked_in_at=? WHERE encounter_id=?",
+            (p["checked_in_at"], encounter_id),
         )
         DB_CONN.commit()
 
@@ -1397,6 +1682,7 @@ def intake_submit(
             ),
         )
         DB_CONN.commit()
+    _ensure_encounter_for_pid(pid, station_id="intake")
     _audit("intake_created", {"pid": pid, "arrival_window": window})
     return RedirectResponse(request.url_for("qr_page", pid=pid), status_code=302)
 
@@ -1442,7 +1728,12 @@ def api_intake_submit(body: IntakeRequest):
         )
         DB_CONN.commit()
     _audit("intake_created", {"pid": pid, "arrival_window": window})
-    return {"pid": pid, "token": patients[pid]["token"], "redirect": f"/qr/{pid}"}
+    return {
+        "pid": pid,
+        "encounter_id": _ensure_encounter_for_pid(pid, station_id="intake"),
+        "token": patients[pid]["token"],
+        "redirect": f"/qr/{pid}",
+    }
 
 
 if not _SPA_BUILD:
@@ -1771,6 +2062,344 @@ async def api_vitals_simulate(request: Request, pid: str = Form("")):
         simulated=1,
         ts=datetime.utcnow().isoformat(),
     )
+
+
+@app.post("/api/insurance/eligibility-check")
+def api_insurance_eligibility_check(body: InsuranceEligibilityRequest):
+    """
+    Run an insurance eligibility/benefits check for this encounter/patient.
+
+    Integration-ready: delegates to a pluggable adapter (e.g. NPHIES/نفيس) and stores
+    a normalized EligibilityCheck row plus raw request/response for audit.
+    """
+    # Resolve patient/encounter
+    pid = (body.pid or "").strip()
+    token = (body.token or "").strip()
+    encounter_id = (body.encounter_id or "").strip()
+
+    if not pid and token:
+        resolved = _resolve_code(token)
+        if not resolved:
+            raise HTTPException(404, "Patient not found for token.")
+        pid = resolved
+    elif not pid and encounter_id:
+        with STATE_LOCK:
+            row = DB_CONN.execute(
+                "SELECT pid FROM encounters WHERE encounter_id=?",
+                (encounter_id,),
+            ).fetchone()
+        if not row:
+            raise HTTPException(404, "Encounter not found.")
+        pid = str(row["pid"] or "")
+
+    if not pid:
+        raise HTTPException(400, "pid, token, or encounter_id is required.")
+
+    if not body.consent:
+        raise HTTPException(400, "Consent is required for insurance eligibility checks.")
+
+    # Ensure encounter exists
+    encounter_id = encounter_id or _ensure_encounter_for_pid(pid, station_id="intake-insurance")
+
+    with STATE_LOCK:
+        patient = patients.get(pid, {}).copy()
+    if not patient:
+        raise HTTPException(404, "Patient not found.")
+
+    insurance_payload = {
+        "encounter_id": encounter_id,
+        "pid": pid,
+        "token": patient.get("token"),
+        "national_id": (body.national_id or "").strip(),
+        "iqama": (body.iqama or "").strip(),
+        "passport": (body.passport or "").strip(),
+        "insurer_name": (body.insurer_name or "").strip(),
+        "policy_number": (body.policy_number or "").strip(),
+        "member_id": (body.member_id or "").strip(),
+        "dob": patient.get("dob"),
+        "phone": patient.get("phone"),
+        "consent": bool(body.consent),
+    }
+
+    now = datetime.utcnow().isoformat()
+    with STATE_LOCK:
+        cur = DB_CONN.execute(
+            """
+            INSERT INTO insurance_profiles(
+              encounter_id, pid, national_id, iqama, passport, insurer_name,
+              policy_number, member_id, dob, phone, consent, raw_payload, created_at
+            ) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?)
+            """,
+            (
+                encounter_id,
+                pid,
+                insurance_payload["national_id"],
+                insurance_payload["iqama"],
+                insurance_payload["passport"],
+                insurance_payload["insurer_name"],
+                insurance_payload["policy_number"],
+                insurance_payload["member_id"],
+                insurance_payload["dob"],
+                insurance_payload["phone"],
+                1 if insurance_payload["consent"] else 0,
+                json.dumps(insurance_payload, ensure_ascii=False),
+                now,
+            ),
+        )
+        insurance_profile_id = int(cur.lastrowid)
+        DB_CONN.execute(
+            "UPDATE encounters SET insurance_profile_id=? WHERE encounter_id=?",
+            (insurance_profile_id, encounter_id),
+        )
+        DB_CONN.commit()
+
+    _audit(
+        "eligibility_attempt",
+        {
+            "encounter_id": encounter_id,
+            "pid": pid,
+            "insurance_profile_id": insurance_profile_id,
+            "insurer_name": insurance_payload["insurer_name"],
+        },
+    )
+
+    adapter: InsuranceAdapter = get_insurance_adapter(INSURANCE_ADAPTER_NAME)
+    adapter_request = {
+        "encounter_id": encounter_id,
+        "patient": {
+            "pid": pid,
+            "first_name": patient.get("first_name"),
+            "last_name": patient.get("last_name"),
+            "dob": patient.get("dob"),
+        },
+        "insurance": insurance_payload,
+    }
+    adapter_result = adapter.submit_eligibility_check(adapter_request)
+
+    eligible_val = adapter_result.get("eligible", None)
+    if eligible_val is True:
+        eligible = "true"
+    elif eligible_val is False:
+        eligible = "false"
+    else:
+        eligible = "unknown"
+    plan_type = adapter_result.get("plan_type")
+    copay_estimate = adapter_result.get("copay_estimate")
+    auth_required = (adapter_result.get("authorization_required") or "unknown") or "unknown"
+
+    status = "completed"
+    created_at = datetime.utcnow().isoformat()
+    with STATE_LOCK:
+        cur = DB_CONN.execute(
+            """
+            INSERT INTO eligibility_checks(
+              encounter_id, insurance_profile_id, status, eligible,
+              plan_type, copay_estimate, authorization_required,
+              raw_request, raw_response, created_at
+            ) VALUES (?,?,?,?,?,?,?,?,?,?)
+            """,
+            (
+                encounter_id,
+                insurance_profile_id,
+                status,
+                eligible,
+                plan_type,
+                copay_estimate,
+                auth_required,
+                json.dumps(adapter_request, ensure_ascii=False),
+                json.dumps(adapter_result, ensure_ascii=False),
+                created_at,
+            ),
+        )
+        eligibility_id = int(cur.lastrowid)
+        DB_CONN.execute(
+            "UPDATE encounters SET eligibility_result_id=? WHERE encounter_id=?",
+            (eligibility_id, encounter_id),
+        )
+        DB_CONN.commit()
+
+    _audit(
+        "eligibility_result",
+        {
+            "encounter_id": encounter_id,
+            "pid": pid,
+            "eligibility_id": eligibility_id,
+            "eligible": eligible,
+            "plan_type": plan_type,
+            "authorization_required": auth_required,
+        },
+    )
+
+    return {
+        "ok": True,
+        "encounter_id": encounter_id,
+        "insurance_profile_id": insurance_profile_id,
+        "eligibility_id": eligibility_id,
+        "normalized": {
+            "eligible": eligible,
+            "plan_type": plan_type,
+            "copay_estimate": copay_estimate,
+            "authorization_required": auth_required,
+        },
+        "adapter": INSURANCE_ADAPTER_NAME,
+    }
+
+
+@app.get("/api/insurance/eligibility/{encounter_id}")
+def api_insurance_eligibility(encounter_id: str):
+    """
+    Return the latest stored eligibility result for an encounter.
+
+    This endpoint returns normalized eligibility data; PHI is limited to encounter_id.
+    """
+    row = _latest_eligibility_for_encounter(encounter_id)
+    if not row:
+        return {
+            "ok": False,
+            "encounter_id": encounter_id,
+            "status": "missing",
+        }
+    return {
+        "ok": True,
+        "encounter_id": encounter_id,
+        "eligibility": row,
+    }
+
+
+@app.post("/api/claims/bundle/{encounter_id}")
+def api_claims_bundle(request: Request, encounter_id: str):
+    """
+    Create a non-diagnostic claim bundle for an encounter.
+
+    Staff-only: requires staff auth. The resulting bundle is stored and also
+    returned so UI can render a human-friendly preview.
+    """
+    _require_staff(request)
+    bundle = _build_claim_bundle(encounter_id)
+    created_at = datetime.utcnow().isoformat()
+    bundle_json = json.dumps(bundle, ensure_ascii=False)
+    with STATE_LOCK:
+        cur = DB_CONN.execute(
+            "INSERT INTO claim_bundles(encounter_id, bundle_json, created_at) VALUES(?,?,?)",
+            (encounter_id, bundle_json, created_at),
+        )
+        bundle_id = int(cur.lastrowid)
+        DB_CONN.execute(
+            "UPDATE encounters SET claim_bundle_id=? WHERE encounter_id=?",
+            (bundle_id, encounter_id),
+        )
+        DB_CONN.commit()
+    _audit("claim_bundle_created", {"encounter_id": encounter_id, "claim_bundle_id": bundle_id})
+    return {
+        "ok": True,
+        "encounter_id": encounter_id,
+        "claim_bundle_id": bundle_id,
+        "status": "draft",
+        "bundle": bundle,
+    }
+
+
+@app.post("/api/claims/submit/{encounter_id}")
+def api_claims_submit(request: Request, encounter_id: str):
+    """
+    Submit the claim bundle for this encounter via the configured adapter.
+
+    Staff-only and non-diagnostic. Returns adapter claim_id and status.
+    """
+    _require_staff(request)
+    bundle = _build_claim_bundle(encounter_id)
+    adapter: InsuranceAdapter = get_insurance_adapter(INSURANCE_ADAPTER_NAME)
+    adapter_result = adapter.submit_claim_bundle(bundle)
+    claim_id = str(adapter_result.get("claim_id") or "")
+    status = str(adapter_result.get("status") or "submitted")
+    now = datetime.utcnow().isoformat()
+    bundle_json = json.dumps(bundle, ensure_ascii=False)
+    with STATE_LOCK:
+        cur_bundle = DB_CONN.execute(
+            "INSERT INTO claim_bundles(encounter_id, bundle_json, created_at) VALUES(?,?,?)",
+            (encounter_id, bundle_json, now),
+        )
+        bundle_id = int(cur_bundle.lastrowid)
+        cur_sub = DB_CONN.execute(
+            """
+            INSERT INTO claim_submissions(
+              encounter_id, claim_bundle_id, adapter_name, external_claim_id,
+              status, raw_response, created_at, updated_at
+            ) VALUES (?,?,?,?,?,?,?,?)
+            """,
+            (
+                encounter_id,
+                bundle_id,
+                INSURANCE_ADAPTER_NAME,
+                claim_id,
+                status,
+                json.dumps(adapter_result, ensure_ascii=False),
+                now,
+                now,
+            ),
+        )
+        submission_id = int(cur_sub.lastrowid)
+        DB_CONN.execute(
+            "UPDATE encounters SET claim_bundle_id=?, claim_status=? WHERE encounter_id=?",
+            (bundle_id, status, encounter_id),
+        )
+        DB_CONN.commit()
+
+    _audit(
+        "claim_submitted",
+        {
+            "encounter_id": encounter_id,
+            "claim_bundle_id": bundle_id,
+            "claim_id": claim_id,
+            "status": status,
+        },
+    )
+    _audit("claim_status_updated", {"encounter_id": encounter_id, "status": status})
+
+    return {
+        "ok": True,
+        "encounter_id": encounter_id,
+        "claim_id": claim_id,
+        "status": status,
+        "adapter": INSURANCE_ADAPTER_NAME,
+        "claim_bundle_id": bundle_id,
+        "submission_id": submission_id,
+    }
+
+
+@app.get("/api/claims/status/{encounter_id}")
+def api_claims_status(request: Request, encounter_id: str):
+    """
+    Get the latest known claim status for this encounter.
+
+    Staff-only. For real NPHIES integration, this endpoint could optionally
+    refresh status via adapter.check_claim_status before returning.
+    """
+    _require_staff(request)
+    latest = _latest_claim_submission_for_encounter(encounter_id)
+    if latest:
+        return {
+            "ok": True,
+            "encounter_id": encounter_id,
+            "claim_id": latest.get("external_claim_id"),
+            "status": latest.get("status") or "submitted",
+            "adapter": latest.get("adapter_name") or INSURANCE_ADAPTER_NAME,
+            "updated_at": latest.get("updated_at"),
+        }
+    # Fall back to encounter row
+    with STATE_LOCK:
+        row = DB_CONN.execute(
+            "SELECT claim_status FROM encounters WHERE encounter_id=?",
+            (encounter_id,),
+        ).fetchone()
+    if not row:
+        raise HTTPException(404, "Encounter not found.")
+    return {
+        "ok": True,
+        "encounter_id": encounter_id,
+        "status": row["claim_status"] or "draft",
+        "adapter": INSURANCE_ADAPTER_NAME,
+    }
 
 
 @app.post("/api/ai/chat")
